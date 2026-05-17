@@ -22,6 +22,7 @@ from database import (
     init_db,
     mark_task_undone,
     rename_list,
+    set_important,
     set_recurrence,
     set_reminder,
     update_task_description,
@@ -109,7 +110,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/renamelist <id> <имя> - Переименовать список\n"
         "/dellist <id> - Удалить список (задачи останутся без списка)\n"
         "/movetask <task_id> <list_id|0> - Переместить задачу в список\n"
-        "/repeat <номер> <daily|weekly|monthly|yearly|off> - Повтор задачи"
+        "/repeat <номер> <daily|weekly|monthly|yearly|off> - Повтор задачи\n"
+        "/important <id> - Пометить важной\n"
+        "/unimportant <id> - Снять важность\n"
+        "/list <important|due|alpha|created> - Список с сортировкой"
     )
     await update.message.reply_text(help_text)
 
@@ -141,12 +145,17 @@ async def add_task_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Отправляет пользователю список его активных задач."""
     user_id = update.effective_user.id
-    if context.args:
+    arg = context.args[0] if context.args else None
+    if arg in ("important", "due", "alpha", "created"):
+        tasks = get_tasks(user_id, sort=arg)
+        header = f"Задачи (сортировка: {arg}):\n"
+    elif arg is not None:
         try:
-            raw = int(context.args[0])
+            raw = int(arg)
         except ValueError:
             await update.message.reply_text(
-                "ID списка должен быть числом (0 — задачи без списка)."
+                "Аргумент: ID списка (число, 0 — без списка) "
+                "или сортировка important|due|alpha|created."
             )
             return
         list_id = None if raw == 0 else raw
@@ -170,7 +179,10 @@ async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         due_str = f", напоминание: {task['due_date']}" if task['due_date'] else ""
         rec = task.get("recurrence")
         rec_str = f" (повтор: {rec})" if rec else ""
-        task_list += f"• {task['id']}. {task['description']}{due_str}{rec_str}\n"
+        imp_str = "[важно] " if task.get("important") else ""
+        task_list += (
+            f"• {task['id']}. {imp_str}{task['description']}{due_str}{rec_str}\n"
+        )
 
     await update.message.reply_text(task_list)
 
@@ -386,6 +398,39 @@ async def repeat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
 
 
+async def _set_important(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, value: bool
+) -> None:
+    if not context.args:
+        cmd = "/important" if value else "/unimportant"
+        await update.message.reply_text(f"Использование: {cmd} <id>")
+        return
+    try:
+        task_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("Номер задачи должен быть числом.")
+        return
+    if not set_important(task_id, value):
+        await update.message.reply_text(f"Задача №{task_id} не найдена.")
+        return
+    if value:
+        await update.message.reply_text(f"Задача №{task_id} помечена важной.")
+    else:
+        await update.message.reply_text(f"С задачи №{task_id} снята важность.")
+
+
+async def important_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Помечает задачу важной: /important <id>."""
+    await _set_important(update, context, True)
+
+
+async def unimportant_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Снимает важность: /unimportant <id>."""
+    await _set_important(update, context, False)
+
+
 def main() -> None:  # pragma: no cover
     """Запускает бота (сетевой polling — вне unit-тестов)."""
     if not TELEGRAM_BOT_TOKEN:
@@ -414,6 +459,8 @@ def main() -> None:  # pragma: no cover
     application.add_handler(CommandHandler("dellist", dellist_command))
     application.add_handler(CommandHandler("movetask", movetask_command))
     application.add_handler(CommandHandler("repeat", repeat_command))
+    application.add_handler(CommandHandler("important", important_command))
+    application.add_handler(CommandHandler("unimportant", unimportant_command))
 
     # Планировщик напоминаний (APScheduler)
     setup_scheduler(application)
