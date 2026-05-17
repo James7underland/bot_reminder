@@ -304,7 +304,10 @@ bot_reminder/
   `mark_step_done`/`delete_step`/`get_task`/`set_note`; команды
   `/addstep`, `/steps`, `/stepdone`, `/stepundone`, `/delstep`,
   `/note`, `/delnote`; 133 теста, покрытие 99.72%. PR #8.
-- 5.6 «Мой день».
+- 5.6 «Мой день». ✅ Колонка `myday_date` (миграция, тест legacy);
+  `add_to_myday`/`remove_from_myday`/`get_myday` (дедлайн сегодня ИЛИ
+  закреплено на сегодня; активные; due-first сортировка); команда
+  `/myday [add|remove <id>]`; 143 теста, покрытие 99.75%. PR #9.
 - 5.7 Поиск + гибкие напоминания.
 - 5.8 Часовые пояса.
 - **DoD каждой под-фазы:** фича работает, покрытие новой логики ≥ 90%, CI

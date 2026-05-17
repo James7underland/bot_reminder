@@ -13,12 +13,14 @@ from database import (
     RECURRENCES,
     add_step,
     add_task,
+    add_to_myday,
     assign_task_to_list,
     complete_task,
     create_list,
     delete_list,
     delete_step,
     get_lists,
+    get_myday,
     get_steps,
     get_task,
     get_tasks,
@@ -26,6 +28,7 @@ from database import (
     init_db,
     mark_step_done,
     mark_task_undone,
+    remove_from_myday,
     rename_list,
     set_important,
     set_note,
@@ -125,7 +128,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/stepdone <step_id> | /stepundone <step_id> - Статус подзадачи\n"
         "/delstep <step_id> - Удалить подзадачу\n"
         "/note <task_id> [текст] - Показать/задать заметку\n"
-        "/delnote <task_id> - Удалить заметку"
+        "/delnote <task_id> - Удалить заметку\n"
+        "/myday [add|remove <id>] - «Мой день» (на сегодня)"
     )
     await update.message.reply_text(help_text)
 
@@ -585,6 +589,44 @@ async def delnote_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text(f"Задача №{task_id} не найдена.")
 
 
+async def myday_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """«Мой день»: /myday | /myday add <id> | /myday remove <id>."""
+    user_id = update.effective_user.id
+    today = datetime.now().strftime("%Y-%m-%d")
+    args = context.args or []
+    if args and args[0] in ("add", "remove", "rm"):
+        if len(args) < 2:
+            await update.message.reply_text(
+                "Использование: /myday add|remove <task_id>"
+            )
+            return
+        try:
+            task_id = int(args[1])
+        except ValueError:
+            await update.message.reply_text("ID задачи должен быть числом.")
+            return
+        if args[0] == "add":
+            ok = add_to_myday(task_id, today)
+            msg_ok = f"Задача №{task_id} добавлена в «Мой день»."
+        else:
+            ok = remove_from_myday(task_id)
+            msg_ok = f"Задача №{task_id} убрана из «Мой день»."
+        await update.message.reply_text(
+            msg_ok if ok else f"Задача №{task_id} не найдена."
+        )
+        return
+    tasks = get_myday(user_id, today)
+    if not tasks:
+        await update.message.reply_text("На сегодня в «Мой день» ничего нет.")
+        return
+    text = "Мой день:\n"
+    for task in tasks:
+        due_str = f", {task['due_date']}" if task["due_date"] else ""
+        imp = "[важно] " if task.get("important") else ""
+        text += f"• {task['id']}. {imp}{task['description']}{due_str}\n"
+    await update.message.reply_text(text)
+
+
 def main() -> None:  # pragma: no cover
     """Запускает бота (сетевой polling — вне unit-тестов)."""
     if not TELEGRAM_BOT_TOKEN:
@@ -622,6 +664,7 @@ def main() -> None:  # pragma: no cover
     application.add_handler(CommandHandler("delstep", delstep_command))
     application.add_handler(CommandHandler("note", note_command))
     application.add_handler(CommandHandler("delnote", delnote_command))
+    application.add_handler(CommandHandler("myday", myday_command))
 
     # Планировщик напоминаний (APScheduler)
     setup_scheduler(application)

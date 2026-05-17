@@ -36,7 +36,8 @@ def init_db():
             list_id INTEGER,
             recurrence TEXT,
             important INTEGER NOT NULL DEFAULT 0,
-            notes TEXT
+            notes TEXT,
+            myday_date TEXT
         )
     ''')
     cursor.execute('''
@@ -73,6 +74,8 @@ def init_db():
         )
     if "notes" not in columns:
         cursor.execute("ALTER TABLE tasks ADD COLUMN notes TEXT")
+    if "myday_date" not in columns:
+        cursor.execute("ALTER TABLE tasks ADD COLUMN myday_date TEXT")
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована.")
@@ -604,3 +607,66 @@ def set_note(task_id: int, note: str | None) -> bool:
         return True
     logger.warning("set_note: task=%s not found", task_id)
     return False
+
+
+# --- «Мой день» (Фаза 5.6) ---
+
+def add_to_myday(task_id: int, day: str) -> bool:
+    """Закрепляет задачу в «Мой день» на дату `day` (YYYY-MM-DD)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE tasks SET myday_date = ? WHERE id = ?", (day, task_id)
+    )
+    rows_affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows_affected > 0:
+        logger.info("task=%s myday=%s", task_id, day)
+        return True
+    logger.warning("add_to_myday: task=%s not found", task_id)
+    return False
+
+
+def remove_from_myday(task_id: int) -> bool:
+    """Убирает задачу из «Мой день». False, если задачи нет."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE tasks SET myday_date = NULL WHERE id = ?", (task_id,)
+    )
+    rows_affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows_affected > 0:
+        logger.info("task=%s removed from myday", task_id)
+        return True
+    logger.warning("remove_from_myday: task=%s not found", task_id)
+    return False
+
+
+def get_myday(user_id: int, day: str) -> list[dict]:
+    """
+    Задачи «на сегодня»: активные, у которых либо дедлайн в день `day`,
+    либо они закреплены в «Мой день» на `day`.
+
+    `day` — строка `YYYY-MM-DD`.
+    """
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM tasks WHERE user_id = ? AND completed = 0 AND ("
+        "(due_date IS NOT NULL AND substr(due_date, 1, 10) = ?) "
+        "OR myday_date = ?) ORDER BY due_date IS NULL, due_date, created_at",
+        (user_id, day, day),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    result = []
+    for row in rows:
+        task = dict(row)
+        task["completed"] = bool(task["completed"])
+        task["important"] = bool(task["important"])
+        result.append(task)
+    return result
