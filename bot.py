@@ -11,18 +11,24 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from config import TELEGRAM_BOT_TOKEN
 from database import (
     RECURRENCES,
+    add_step,
     add_task,
     assign_task_to_list,
     complete_task,
     create_list,
     delete_list,
+    delete_step,
     get_lists,
+    get_steps,
+    get_task,
     get_tasks,
     get_tasks_by_list,
     init_db,
+    mark_step_done,
     mark_task_undone,
     rename_list,
     set_important,
+    set_note,
     set_recurrence,
     set_reminder,
     update_task_description,
@@ -113,7 +119,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/repeat <номер> <daily|weekly|monthly|yearly|off> - Повтор задачи\n"
         "/important <id> - Пометить важной\n"
         "/unimportant <id> - Снять важность\n"
-        "/list <important|due|alpha|created> - Список с сортировкой"
+        "/list <important|due|alpha|created> - Список с сортировкой\n"
+        "/addstep <task_id> <описание> - Добавить подзадачу\n"
+        "/steps <task_id> - Заметка и подзадачи задачи\n"
+        "/stepdone <step_id> | /stepundone <step_id> - Статус подзадачи\n"
+        "/delstep <step_id> - Удалить подзадачу\n"
+        "/note <task_id> [текст] - Показать/задать заметку\n"
+        "/delnote <task_id> - Удалить заметку"
     )
     await update.message.reply_text(help_text)
 
@@ -431,6 +443,148 @@ async def unimportant_command(
     await _set_important(update, context, False)
 
 
+async def addstep_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Добавляет подзадачу: /addstep <task_id> <описание>."""
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text("Использование: /addstep <task_id> <описание>")
+        return
+    try:
+        task_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("ID задачи должен быть числом.")
+        return
+    desc = " ".join(context.args[1:]).strip()
+    if not desc:
+        await update.message.reply_text("Опишите подзадачу.")
+        return
+    step_id = add_step(task_id, desc)
+    if step_id is None:
+        await update.message.reply_text(f"Задача №{task_id} не найдена.")
+    else:
+        await update.message.reply_text(
+            f"Подзадача №{step_id} добавлена к задаче №{task_id}."
+        )
+
+
+async def steps_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Показывает заметку и подзадачи задачи: /steps <task_id>."""
+    if not context.args:
+        await update.message.reply_text("Использование: /steps <task_id>")
+        return
+    try:
+        task_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("ID задачи должен быть числом.")
+        return
+    task = get_task(task_id)
+    if task is None:
+        await update.message.reply_text(f"Задача №{task_id} не найдена.")
+        return
+    lines = [f"Задача №{task_id}: {task['description']}"]
+    if task.get("notes"):
+        lines.append(f"Заметка: {task['notes']}")
+    steps = get_steps(task_id)
+    if not steps:
+        lines.append("Подзадач нет.")
+    else:
+        lines.append("Подзадачи:")
+        for s in steps:
+            mark = "[x]" if s["completed"] else "[ ]"
+            lines.append(f"  {mark} {s['id']}. {s['description']}")
+    await update.message.reply_text("\n".join(lines))
+
+
+async def _set_step(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, done: bool
+) -> None:
+    if not context.args:
+        cmd = "/stepdone" if done else "/stepundone"
+        await update.message.reply_text(f"Использование: {cmd} <step_id>")
+        return
+    try:
+        step_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("ID подзадачи должен быть числом.")
+        return
+    if mark_step_done(step_id, done):
+        state = "выполнена" if done else "снова активна"
+        await update.message.reply_text(f"Подзадача №{step_id} {state}.")
+    else:
+        await update.message.reply_text(f"Подзадача №{step_id} не найдена.")
+
+
+async def stepdone_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Отмечает подзадачу выполненной: /stepdone <step_id>."""
+    await _set_step(update, context, True)
+
+
+async def stepundone_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Возвращает подзадачу в активные: /stepundone <step_id>."""
+    await _set_step(update, context, False)
+
+
+async def delstep_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Удаляет подзадачу: /delstep <step_id>."""
+    if not context.args:
+        await update.message.reply_text("Использование: /delstep <step_id>")
+        return
+    try:
+        step_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("ID подзадачи должен быть числом.")
+        return
+    if delete_step(step_id):
+        await update.message.reply_text(f"Подзадача №{step_id} удалена.")
+    else:
+        await update.message.reply_text(f"Подзадача №{step_id} не найдена.")
+
+
+async def note_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Показывает/устанавливает заметку: /note <task_id> [текст]."""
+    if not context.args:
+        await update.message.reply_text("Использование: /note <task_id> [текст]")
+        return
+    try:
+        task_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("ID задачи должен быть числом.")
+        return
+    if len(context.args) == 1:
+        task = get_task(task_id)
+        if task is None:
+            await update.message.reply_text(f"Задача №{task_id} не найдена.")
+        elif task.get("notes"):
+            await update.message.reply_text(
+                f"Заметка №{task_id}: {task['notes']}"
+            )
+        else:
+            await update.message.reply_text(f"У задачи №{task_id} нет заметки.")
+        return
+    note = " ".join(context.args[1:]).strip()
+    if set_note(task_id, note):
+        await update.message.reply_text(f"Заметка для №{task_id} сохранена.")
+    else:
+        await update.message.reply_text(f"Задача №{task_id} не найдена.")
+
+
+async def delnote_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Удаляет заметку: /delnote <task_id>."""
+    if not context.args:
+        await update.message.reply_text("Использование: /delnote <task_id>")
+        return
+    try:
+        task_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("ID задачи должен быть числом.")
+        return
+    if set_note(task_id, None):
+        await update.message.reply_text(f"Заметка задачи №{task_id} удалена.")
+    else:
+        await update.message.reply_text(f"Задача №{task_id} не найдена.")
+
+
 def main() -> None:  # pragma: no cover
     """Запускает бота (сетевой polling — вне unit-тестов)."""
     if not TELEGRAM_BOT_TOKEN:
@@ -461,6 +615,13 @@ def main() -> None:  # pragma: no cover
     application.add_handler(CommandHandler("repeat", repeat_command))
     application.add_handler(CommandHandler("important", important_command))
     application.add_handler(CommandHandler("unimportant", unimportant_command))
+    application.add_handler(CommandHandler("addstep", addstep_command))
+    application.add_handler(CommandHandler("steps", steps_command))
+    application.add_handler(CommandHandler("stepdone", stepdone_command))
+    application.add_handler(CommandHandler("stepundone", stepundone_command))
+    application.add_handler(CommandHandler("delstep", delstep_command))
+    application.add_handler(CommandHandler("note", note_command))
+    application.add_handler(CommandHandler("delnote", delnote_command))
 
     # Планировщик напоминаний (APScheduler)
     setup_scheduler(application)

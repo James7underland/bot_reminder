@@ -299,7 +299,11 @@ bot_reminder/
   default = created — поведение неизменно, контракт сохранён);
   `/important`, `/unimportant`, `/list <sort>`, маркер «[важно]»;
   117 тестов, покрытие 99.63%. PR #7.
-- 5.5 Подзадачи и заметки.
+- 5.5 Подзадачи и заметки. ✅ Таблица `steps` (FK + ON DELETE CASCADE) +
+  колонка `notes` (миграция, тест legacy); БД `add_step`/`get_steps`/
+  `mark_step_done`/`delete_step`/`get_task`/`set_note`; команды
+  `/addstep`, `/steps`, `/stepdone`, `/stepundone`, `/delstep`,
+  `/note`, `/delnote`; 133 теста, покрытие 99.72%. PR #8.
 - 5.6 «Мой день».
 - 5.7 Поиск + гибкие напоминания.
 - 5.8 Часовые пояса.

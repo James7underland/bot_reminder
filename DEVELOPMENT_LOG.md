@@ -304,3 +304,32 @@ TOTAL 99.63%; ruff чист.
 **Следующие шаги:**
 1.  Merge PR #7 в `main`.
 2.  Фаза 5.5 — подзадачи (таблица `steps`) и заметки (поле `notes`).
+
+---
+
+## Этап 11: Фаза 5.5 — подзадачи и заметки
+
+**Дата:** 2026-05-17
+
+**Описание:** Ветка `phase/5.5-steps-notes`. Таблица `steps`
+(`task_id` FK → `tasks(id)` `ON DELETE CASCADE`, `completed`,
+`created_at`) + колонка `tasks.notes` (`CREATE` + идемпотентная
+миграция, тест legacy). Слой БД: `add_step` (None, если родительской
+задачи нет — без опоры на исключение FK), `get_steps`
+(`completed`→bool), `mark_step_done(done=)`, `delete_step`, `get_task`
+(одиночная задача, `completed`/`important`→bool), `set_note`
+(None — очистить). Команды: `/addstep`, `/steps` (показывает заметку +
+подзадачи `[x]/[ ]`), `/stepdone`, `/stepundone` (общий хелпер
+`_set_step`), `/delstep`, `/note <id> [текст]` (без текста — показать),
+`/delnote`.
+
+**Результат:** 133 теста зелёные (+16 в `tests/test_steps_notes.py`:
+БД, все ветки хендлеров, миграция legacy); `bot.py`/`database.py`/
+`scheduler.py` 100%, `config.py` 80%, TOTAL 99.72%; ruff чист.
+
+**Статус:** Фаза 5.5 — зелёная локально ✅; PR #8 → merge после CI.
+
+**Следующие шаги:**
+1.  Merge PR #8 в `main`.
+2.  Фаза 5.6 — «Мой день» (`/myday`: задачи с дедлайном сегодня +
+    отмеченные «в мой день»).

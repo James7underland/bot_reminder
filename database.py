@@ -35,7 +35,8 @@ def init_db():
             reminder_sent INTEGER NOT NULL DEFAULT 0,
             list_id INTEGER,
             recurrence TEXT,
-            important INTEGER NOT NULL DEFAULT 0
+            important INTEGER NOT NULL DEFAULT 0,
+            notes TEXT
         )
     ''')
     cursor.execute('''
@@ -44,6 +45,16 @@ def init_db():
             user_id INTEGER NOT NULL,
             name TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS steps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL,
+            description TEXT NOT NULL,
+            completed INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
         )
     ''')
     # Миграции для БД, созданных до Фаз 4/5.2 (колонок могло не быть).
@@ -60,6 +71,8 @@ def init_db():
         cursor.execute(
             "ALTER TABLE tasks ADD COLUMN important INTEGER NOT NULL DEFAULT 0"
         )
+    if "notes" not in columns:
+        cursor.execute("ALTER TABLE tasks ADD COLUMN notes TEXT")
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована.")
@@ -483,4 +496,111 @@ def set_important(task_id: int, important: bool) -> bool:
         logger.info("task=%s important=%s", task_id, important)
         return True
     logger.warning("set_important: task=%s not found", task_id)
+    return False
+
+
+# --- Подзадачи и заметки (Фаза 5.5) ---
+
+def get_task(task_id: int) -> dict | None:
+    """Возвращает задачу по id (или None). completed/important -> bool."""
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if row is None:
+        return None
+    task = dict(row)
+    task["completed"] = bool(task["completed"])
+    task["important"] = bool(task["important"])
+    return task
+
+
+def add_step(task_id: int, description: str) -> int | None:
+    """Добавляет подзадачу. None, если родительской задачи нет."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1 FROM tasks WHERE id = ?", (task_id,))
+    if cursor.fetchone() is None:
+        conn.close()
+        logger.warning("add_step: task=%s not found", task_id)
+        return None
+    cursor.execute(
+        "INSERT INTO steps (task_id, description) VALUES (?, ?)",
+        (task_id, description),
+    )
+    step_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    logger.info("task=%s add step=%s", task_id, step_id)
+    return step_id
+
+
+def get_steps(task_id: int) -> list[dict]:
+    """Подзадачи задачи (по времени создания). completed -> bool."""
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM steps WHERE task_id = ? ORDER BY created_at, id",
+        (task_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    result = []
+    for row in rows:
+        step = dict(row)
+        step["completed"] = bool(step["completed"])
+        result.append(step)
+    return result
+
+
+def mark_step_done(step_id: int, done: bool = True) -> bool:
+    """Отмечает подзадачу выполненной/невыполненной. False, если нет."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE steps SET completed = ? WHERE id = ?",
+        (1 if done else 0, step_id),
+    )
+    rows_affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows_affected > 0:
+        logger.info("step=%s done=%s", step_id, done)
+        return True
+    logger.warning("mark_step_done: step=%s not found", step_id)
+    return False
+
+
+def delete_step(step_id: int) -> bool:
+    """Удаляет подзадачу. False, если её нет."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM steps WHERE id = ?", (step_id,))
+    rows_affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows_affected > 0:
+        logger.info("step=%s deleted", step_id)
+        return True
+    logger.warning("delete_step: step=%s not found", step_id)
+    return False
+
+
+def set_note(task_id: int, note: str | None) -> bool:
+    """Задаёт заметку задачи (None — очистить). False, если задачи нет."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE tasks SET notes = ? WHERE id = ?", (note, task_id)
+    )
+    rows_affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows_affected > 0:
+        logger.info("task=%s note set (%s chars)", task_id, len(note or ""))
+        return True
+    logger.warning("set_note: task=%s not found", task_id)
     return False
