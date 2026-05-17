@@ -85,9 +85,14 @@ def get_tasks(user_id: int, completed: bool = False) -> List[Dict]:
     
     rows = cursor.fetchall()
     conn.close()
-    
-    # Конвертируем sqlite3.Row в список словарей
-    return [dict(row) for row in rows]
+
+    # sqlite3.Row -> dict; completed приводим к Python bool (контракт тестов).
+    result = []
+    for row in rows:
+        task = dict(row)
+        task["completed"] = bool(task["completed"])
+        result.append(task)
+    return result
 
 def mark_task_done(task_id: int) -> bool:
     """
