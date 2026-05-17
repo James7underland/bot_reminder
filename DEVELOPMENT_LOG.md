@@ -145,3 +145,38 @@ F841, в т.ч. в старом `test_database.py`); lint-джоба в CI ст�
     `reminder_sent`), тесты с инъекцией времени.
 3.  Пользователь: создать локальный `.env` с новым токеном для ручного
     прогона бота.
+
+---
+
+## Этап 6: Фаза 4 — напоминания (APScheduler)
+
+**Дата:** 2026-05-17
+
+**Описание:** Ветка `phase/4-scheduler`. Схема: добавлена колонка
+`reminder_sent` в `CREATE TABLE` + идемпотентная миграция `ALTER TABLE`
+для БД, созданных до Фазы 4 (покрыта тестом на legacy-таблице).
+`set_reminder` теперь сбрасывает `reminder_sent=0` (перенос срока →
+напоминание сработает снова). Добавлены `database.get_due_tasks(now)`
+(выборка: `completed=0 AND reminder_sent=0 AND due_date<=now`,
+лексикографическое сравнение строк формата `YYYY-MM-DD HH:MM:SS`
+эквивалентно временно́му) и `mark_reminder_sent`.
+
+`scheduler.py`: `check_and_send_reminders(bot, now=None)` — чистая
+тестируемая логика (БД + отправка через переданный `bot`), анти-дубль
+через `mark_reminder_sent` после успешной отправки; при ошибке отправки
+задача НЕ помечается (повтор на следующем тике — приоритет доставке).
+`setup_scheduler` (AsyncIOScheduler, интервал `SCHEDULER_CHECK_INTERVAL`)
+помечен `# pragma: no cover` (интеграция). Подключён в `bot.main()`.
+`scheduler` добавлен в `[tool.coverage.run] source`.
+
+**Результат:** 39 тестов зелёные; `bot.py`/`database.py`/`scheduler.py`
+100%, `config.py` 80%, TOTAL 98.95%; ruff — `All checks passed`.
+
+**Статус:** Фаза 4 — зелёная локально ✅; PR #3 → merge после зелёного CI.
+
+**Следующие шаги:**
+1.  Merge PR #3 в `main`.
+2.  Фаза 5 — паритет с Microsoft To Do (под-фазы 5.1…5.8), начиная с
+    5.1 (редактирование/перенос/uncomplete).
+3.  Пользователь: `.env` с новым токеном для ручной проверки
+    «уведомление приходит один раз».

@@ -10,6 +10,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 
 from config import TELEGRAM_BOT_TOKEN
 from database import add_task, get_tasks, init_db, mark_task_done
+from scheduler import setup_scheduler
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -158,6 +159,9 @@ def main() -> None:  # pragma: no cover
     application.add_handler(CommandHandler("add", add_task_command))
     application.add_handler(CommandHandler("list", list_tasks))
     application.add_handler(CommandHandler("done", done_task))
+
+    # Планировщик напоминаний (APScheduler)
+    setup_scheduler(application)
 
     # Запускаем бота и пропускаем все обновления, которые пришли, когда он был выключен
     application.run_polling(allowed_updates=Update.ALL_TYPES)
