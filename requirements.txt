@@ -1,0 +1,7 @@
+# Runtime-зависимости бота
+python-telegram-bot>=21,<22
+APScheduler>=3.10,<4
+python-dotenv>=1.0
+
+# Фаза 6 (PostgreSQL) — раскомментировать при миграции:
+# psycopg[binary]>=3.2

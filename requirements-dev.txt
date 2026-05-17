@@ -1,0 +1,7 @@
+# Dev/CI-зависимости: тесты и линтер. Используется в CI и локально.
+-r requirements.txt
+
+pytest>=8.0
+pytest-cov>=5.0
+pytest-asyncio>=0.23
+ruff>=0.6
