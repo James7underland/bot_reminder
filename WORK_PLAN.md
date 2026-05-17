@@ -251,9 +251,13 @@ bot_reminder/
   (естественный язык не реализуется — решение №4).
 - Связка с `database.*`; `run_polling()`.
 - Тесты: `test_parse.py` (таблица форматов, мусор, без даты),
-  `test_handlers.py` (Telegram замокан, без сети).
-- **DoD:** тесты зелёные, покрытие парсера ≥ 90%, ручной сценарий
-  add→list→done, CI зелёный, merge.
+  `test_handlers.py` (Telegram замокан, без сети). ✅
+- **Сделано:** парсер переписан под 2 строгих формата (норм. к
+  `YYYY-MM-DD HH:MM:SS`); 32 теста зелёные; `bot.py` 100%,
+  `database.py` 100%, TOTAL 98.6%; `fail_under=90` включён; ruff чист,
+  lint в CI стал блокирующим. `main()` помечен `# pragma: no cover`.
+- **DoD:** CI зелёный → merge PR #2. Ручной сценарий add→list→done
+  требует, чтобы пользователь создал `.env` с новым токеном (вне Claude).
 
 ### Фаза 4 — Напоминания (`scheduler.py`)
 

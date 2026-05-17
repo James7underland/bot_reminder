@@ -1,75 +1,59 @@
 """
 Главный модуль Telegram-бота-напоминалки.
 """
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
 import logging
 import re
-from typing import Tuple, Optional
+from datetime import datetime
 
-# Настройка логирования
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
+
+from config import TELEGRAM_BOT_TOKEN
+from database import add_task, get_tasks, init_db, mark_task_done
+
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
 
-# Импортируем функции из других модулей
-from config import TELEGRAM_BOT_TOKEN
-from database import add_task, get_tasks, mark_task_done, init_db
+# Поддерживаются ТОЛЬКО явные форматы даты-времени (решение №4 — без
+# естественного языка). (strptime-формат, regex) — порядок важен.
+_DATE_FORMATS = (
+    ("%Y-%m-%d %H:%M", r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}"),
+    ("%d.%m.%Y %H:%M", r"\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}"),
+)
+_COMMAND_RE = re.compile(r"^/add(?:@\w+)?\s*", re.IGNORECASE)
 
-# Функция для разбора команды /add
-# Регулярное выражение для поиска даты в форматах: YYYY-MM-DD HH:MM, DD.MM.YYYY, HH:MM и т.д.
-DATE_PATTERN = r'(\d{4}-\d{2}-\d{2}( \d{2}:\d{2})?|\d{2}\.\d{2}\.\d{4}( \d{2}:\d{2})?|\d{2}:\d{2})'
 
-def parse_add_command(text: str) -> Tuple[str, Optional[str]]:
+def parse_add_command(text: str) -> tuple[str, str | None]:
     """
-    Разбирает текст команды /add и извлекает описание и дату напоминания.
+    Разбирает текст команды /add.
 
-    Args:
-        text: Полный текст команды (например, '/add Сделать отчет 2026-05-18 15:00').
+    Поддерживаются только форматы `YYYY-MM-DD HH:MM` и `DD.MM.YYYY HH:MM`.
+    Дата-подобный, но невалидный токен (напр. `2026-13-40 99:99`) датой не
+    считается и остаётся частью описания.
 
     Returns:
-        Кортеж (описание, дата_в_ISO_формате). Дата может быть None.
+        (описание, due_date|None), где due_date нормализован к
+        `YYYY-MM-DD HH:MM:SS`.
     """
-    # Удаляем команду и пробел в начале
-    text = text[len('/add'):].strip()
-    
-    # Ищем дату в тексте
-    date_match = re.search(DATE_PATTERN, text)
-    due_date = None
-    description = text
-    
-    if date_match:
-        # Извлекаем найденную дату
-        raw_date = date_match.group()
-        # Простая конвертация в ISO формат. В реальности нужно использовать библиотеку, например, dateutil.
-        # Это заглушка для демонстрации.
-        # Поддерживаем формат YYYY-MM-DD HH:MM
-        if ' ' in raw_date: # Есть и дата, и время
-            date_part, time_part = raw_date.split()
-            if '.' in date_part: # DD.MM.YYYY
-                day, month, year = date_part.split('.')
-                iso_date = f"{year}-{month}-{day} {time_part}"
-            else: # YYYY-MM-DD
-                iso_date = f"{date_part} {time_part}"
-        else: # Только дата или только время
-            if '.' in raw_date: # DD.MM.YYYY
-                day, month, year = raw_date.split('.')
-                iso_date = f"{year}-{month}-{day} 00:00:00" # Время по умолчанию
-            else: # Это может быть только время HH:MM
-                iso_date = f"{raw_date}:00" # Добавляем секунды
-                # В этом случае, возможно, нужно привязать к завтрашнему дню? Это уточнение требует логики.
-                # Пока просто используем текущую дату.
-                from datetime import datetime
-                today = datetime.now().strftime("%Y-%m-%d")
-                iso_date = f"{today} {iso_date}"
-        due_date = iso_date
-        # Удаляем найденную дату из описания
-        description = text[:date_match.start()] + text[date_match.end():]
-        description = description.strip()
-        
-    return description, due_date
+    body = _COMMAND_RE.sub("", text or "", count=1).strip()
+
+    for fmt, pattern in _DATE_FORMATS:
+        match = re.search(pattern, body)
+        if not match:
+            continue
+        try:
+            dt = datetime.strptime(match.group(), fmt)
+        except ValueError:
+            continue
+        due_date = dt.strftime("%Y-%m-%d %H:%M:%S")
+        description = (body[: match.start()] + body[match.end():]).strip()
+        description = re.sub(r"\s{2,}", " ", description)
+        return description, due_date
+
+    return body, None
 
 # Обработчики команд
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -85,7 +69,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     help_text = (
         "/start - Начать работу с ботом\n"
         "/help - Показать это сообщение\n"
-        "/add <описание> [дата время] - Добавить задачу. Пример: /add Сделать отчет 2026-05-18 15:00\n"
+        "/add <описание> [YYYY-MM-DD HH:MM] - Добавить задачу\n"
         "/list - Показать все активные задачи\n"
         "/done <номер> - Отметить задачу как выполненную"
     )
@@ -96,40 +80,41 @@ async def add_task_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     """Обрабатывает команду /add для добавления новой задачи."""
     user_id = update.effective_user.id
     text = update.message.text
-    
+
     description, due_date = parse_add_command(text)
-    
+
     # Проверяем, что описание не пустое
     if not description:
         await update.message.reply_text("Пожалуйста, укажите описание задачи.")
         return
-    
+
     try:
         task_id = add_task(user_id, description, due_date)
         if due_date:
-            await update.message.reply_text(f"Задача \"{description}\" добавлена! Напоминание установлено на {due_date}.")
+            msg = f'Задача "{description}" добавлена! Напоминание: {due_date}.'
         else:
-            await update.message.reply_text(f"Задача \"{description}\" добавлена! Напоминание не установлено.")
-        logger.info(f"Пользователь {user_id} добавил задачу {task_id}: '{description}' (до {due_date})")
+            msg = f'Задача "{description}" добавлена! Без напоминания.'
+        await update.message.reply_text(msg)
+        logger.info("user=%s added task=%s due=%s", user_id, task_id, due_date)
     except Exception as e:
-        logger.error(f"Ошибка при добавлении задачи для пользователя {user_id}: {e}")
+        logger.error("add_task failed for user=%s: %s", user_id, e)
         await update.message.reply_text("Произошла ошибка при добавлении задачи.")
 
 async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Отправляет пользователю список его активных задач."""
     user_id = update.effective_user.id
     tasks = get_tasks(user_id)
-    
+
     if not tasks:
         await update.message.reply_text("У вас пока нет активных задач.")
         return
-    
+
     # Форматируем список задач
     task_list = "Ваши активные задачи:\n"
     for task in tasks:
         due_str = f", напоминание: {task['due_date']}" if task['due_date'] else ""
         task_list += f"• {task['id']}. {task['description']}{due_str}\n"
-    
+
     await update.message.reply_text(task_list)
 
 
@@ -139,23 +124,23 @@ async def done_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
         await update.message.reply_text("Пожалуйста, укажите номер задачи. Пример: /done 1")
         return
-    
+
     try:
         task_id = int(context.args[0])
     except ValueError:
         await update.message.reply_text("Номер задачи должен быть числом.")
         return
-    
+
     success = mark_task_done(task_id)
     if success:
         await update.message.reply_text(f"Задача №{task_id} отмечена как выполненная!")
-        logger.info(f"Пользователь {update.effective_user.id} отметил задачу {task_id} как выполненную.")
+        logger.info("user=%s marked task=%s done", update.effective_user.id, task_id)
     else:
         await update.message.reply_text(f"Задача №{task_id} не найдена или уже выполнена.")
 
 
-def main() -> None:
-    """Запускает бота."""
+def main() -> None:  # pragma: no cover
+    """Запускает бота (сетевой polling — вне unit-тестов)."""
     if not TELEGRAM_BOT_TOKEN:
         raise SystemExit(
             "TELEGRAM_BOT_TOKEN не задан. Скопируйте .env.example в .env "
@@ -163,19 +148,19 @@ def main() -> None:
         )
     # Создаем приложение и передаем ему токен бота
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-    
+
     # Инициализируем базу данных
     init_db()
-    
+
     # Регистрируем обработчики команд
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("add", add_task_command))
     application.add_handler(CommandHandler("list", list_tasks))
     application.add_handler(CommandHandler("done", done_task))
-    
+
     # Запускаем бота и пропускаем все обновления, которые пришли, когда он был выключен
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-if __name__ == '__main__':
+if __name__ == '__main__':  # pragma: no cover
     main()
