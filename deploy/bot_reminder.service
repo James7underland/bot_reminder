@@ -1,0 +1,20 @@
+# systemd-юнит для бота. Скопировать в /etc/systemd/system/,
+# заменить __USER__ на имя пользователя на VPS, затем:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now bot_reminder
+[Unit]
+Description=Telegram reminder bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=/home/__USER__/bot_reminder
+EnvironmentFile=/home/__USER__/bot_reminder/.env
+ExecStart=/home/__USER__/bot_reminder/.venv/bin/python bot.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
