@@ -184,3 +184,35 @@ def mark_reminder_sent(task_id: int) -> bool:
         return True
     logger.warning("mark_reminder_sent: task=%s not found", task_id)
     return False
+
+
+def update_task_description(task_id: int, description: str) -> bool:
+    """Меняет описание задачи. False, если задачи нет."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE tasks SET description = ? WHERE id = ?", (description, task_id)
+    )
+    rows_affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows_affected > 0:
+        logger.info("task=%s description updated", task_id)
+        return True
+    logger.warning("update_task_description: task=%s not found", task_id)
+    return False
+
+
+def mark_task_undone(task_id: int) -> bool:
+    """Возвращает задачу в активные (completed=0). False, если задачи нет."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE tasks SET completed = 0 WHERE id = ?", (task_id,))
+    rows_affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows_affected > 0:
+        logger.info("task=%s marked undone", task_id)
+        return True
+    logger.warning("mark_task_undone: task=%s not found", task_id)
+    return False
