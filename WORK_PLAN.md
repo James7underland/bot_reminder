@@ -284,7 +284,11 @@ bot_reminder/
   `/undone`; БД `update_task_description`/`mark_task_undone`; парсер
   отрефакторен (`_match_due`, `parse_datetime`); миграции не требовалось;
   60 тестов зелёные, покрытие 99.25%. PR #4.
-- 5.2 Списки/категории.
+- 5.2 Списки/категории. ✅ Таблица `lists` + `tasks.list_id` (миграция,
+  тест legacy); БД `create_list`/`get_lists`/`rename_list`/`delete_list`
+  (задачи → без списка)/`assign_task_to_list`/`get_tasks_by_list`;
+  команды `/lists`, `/newlist`, `/renamelist`, `/dellist`, `/movetask`,
+  `/list <id|0>`; 81 тест, покрытие 99.52%. PR #5.
 - 5.3 Повторяющиеся задачи.
 - 5.4 Важные задачи + сортировки.
 - 5.5 Подзадачи и заметки.

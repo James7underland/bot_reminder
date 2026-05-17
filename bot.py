@@ -11,10 +11,16 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from config import TELEGRAM_BOT_TOKEN
 from database import (
     add_task,
+    assign_task_to_list,
+    create_list,
+    delete_list,
+    get_lists,
     get_tasks,
+    get_tasks_by_list,
     init_db,
     mark_task_done,
     mark_task_undone,
+    rename_list,
     set_reminder,
     update_task_description,
 )
@@ -95,7 +101,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/done <номер> - Отметить задачу как выполненную\n"
         "/undone <номер> - Вернуть задачу в активные\n"
         "/edit <номер> <описание> - Изменить описание\n"
-        "/reschedule <номер> <YYYY-MM-DD HH:MM> - Перенести напоминание"
+        "/reschedule <номер> <YYYY-MM-DD HH:MM> - Перенести напоминание\n"
+        "/lists - Показать списки\n"
+        "/newlist <имя> - Создать список\n"
+        "/renamelist <id> <имя> - Переименовать список\n"
+        "/dellist <id> - Удалить список (задачи останутся без списка)\n"
+        "/movetask <task_id> <list_id|0> - Переместить задачу в список"
     )
     await update.message.reply_text(help_text)
 
@@ -127,14 +138,31 @@ async def add_task_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Отправляет пользователю список его активных задач."""
     user_id = update.effective_user.id
-    tasks = get_tasks(user_id)
+    if context.args:
+        try:
+            raw = int(context.args[0])
+        except ValueError:
+            await update.message.reply_text(
+                "ID списка должен быть числом (0 — задачи без списка)."
+            )
+            return
+        list_id = None if raw == 0 else raw
+        tasks = get_tasks_by_list(user_id, list_id)
+        header = (
+            "Задачи без списка:\n"
+            if list_id is None
+            else f"Задачи списка №{list_id}:\n"
+        )
+    else:
+        tasks = get_tasks(user_id)
+        header = "Ваши активные задачи:\n"
 
     if not tasks:
         await update.message.reply_text("У вас пока нет активных задач.")
         return
 
     # Форматируем список задач
-    task_list = "Ваши активные задачи:\n"
+    task_list = header
     for task in tasks:
         due_str = f", напоминание: {task['due_date']}" if task['due_date'] else ""
         task_list += f"• {task['id']}. {task['description']}{due_str}\n"
@@ -223,6 +251,95 @@ async def undone_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(f"Задача №{task_id} не найдена.")
 
 
+async def lists_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Показывает списки пользователя."""
+    lists = get_lists(update.effective_user.id)
+    if not lists:
+        await update.message.reply_text(
+            "У вас пока нет списков. Создать: /newlist <имя>"
+        )
+        return
+    text = "Ваши списки:\n"
+    for lst in lists:
+        text += f"• {lst['id']}. {lst['name']}\n"
+    await update.message.reply_text(text)
+
+
+async def newlist_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Создаёт список: /newlist <имя>."""
+    name = " ".join(context.args).strip() if context.args else ""
+    if not name:
+        await update.message.reply_text("Использование: /newlist <имя>")
+        return
+    list_id = create_list(update.effective_user.id, name)
+    await update.message.reply_text(f'Список "{name}" создан (№{list_id}).')
+
+
+async def renamelist_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Переименовывает список: /renamelist <id> <имя>."""
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text("Использование: /renamelist <id> <новое имя>")
+        return
+    try:
+        list_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("ID списка должен быть числом.")
+        return
+    name = " ".join(context.args[1:]).strip()
+    if not name:
+        await update.message.reply_text("Укажите новое имя списка.")
+        return
+    if rename_list(list_id, name):
+        await update.message.reply_text(f'Список №{list_id} переименован в "{name}".')
+    else:
+        await update.message.reply_text(f"Список №{list_id} не найден.")
+
+
+async def dellist_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Удаляет список (задачи остаются без списка): /dellist <id>."""
+    if not context.args:
+        await update.message.reply_text("Использование: /dellist <id>")
+        return
+    try:
+        list_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("ID списка должен быть числом.")
+        return
+    if delete_list(list_id):
+        await update.message.reply_text(
+            f"Список №{list_id} удалён (задачи остались без списка)."
+        )
+    else:
+        await update.message.reply_text(f"Список №{list_id} не найден.")
+
+
+async def movetask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Перемещает задачу в список: /movetask <task_id> <list_id|0>."""
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text(
+            "Использование: /movetask <task_id> <list_id|0>"
+        )
+        return
+    try:
+        task_id = int(context.args[0])
+        raw_list = int(context.args[1])
+    except ValueError:
+        await update.message.reply_text("ID задачи и списка должны быть числами.")
+        return
+    user_id = update.effective_user.id
+    target = None if raw_list == 0 else raw_list
+    if target is not None and target not in {
+        lst["id"] for lst in get_lists(user_id)
+    }:
+        await update.message.reply_text(f"Список №{target} не найден.")
+        return
+    if assign_task_to_list(task_id, target):
+        where = "без списка" if target is None else f"в список №{target}"
+        await update.message.reply_text(f"Задача №{task_id} перемещена {where}.")
+    else:
+        await update.message.reply_text(f"Задача №{task_id} не найдена.")
+
+
 def main() -> None:  # pragma: no cover
     """Запускает бота (сетевой polling — вне unit-тестов)."""
     if not TELEGRAM_BOT_TOKEN:
@@ -245,6 +362,11 @@ def main() -> None:  # pragma: no cover
     application.add_handler(CommandHandler("undone", undone_command))
     application.add_handler(CommandHandler("edit", edit_task_command))
     application.add_handler(CommandHandler("reschedule", reschedule_command))
+    application.add_handler(CommandHandler("lists", lists_command))
+    application.add_handler(CommandHandler("newlist", newlist_command))
+    application.add_handler(CommandHandler("renamelist", renamelist_command))
+    application.add_handler(CommandHandler("dellist", dellist_command))
+    application.add_handler(CommandHandler("movetask", movetask_command))
 
     # Планировщик напоминаний (APScheduler)
     setup_scheduler(application)
