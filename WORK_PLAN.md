@@ -112,8 +112,10 @@ session-scope ломает изоляцию.
 
 ### Ветвление и коммиты
 
-- `main` — всегда зелёная и развёртываемая. Прямой push в `main` запрещён
-  (branch protection).
+- `main` — всегда зелёная и развёртываемая. Технический branch protection
+  **недоступен** (требует GitHub Pro для private-репо), поэтому запрет
+  прямого push и «merge только зелёного» соблюдаются **дисциплиной**: Claude
+  не мержит красные PR. CI виден на каждом PR. (Решение пользователя §9.)
 - На каждый этап — ветка `phase/<N>-<slug>` (напр. `phase/2-data-layer`).
 - Коммит на каждый осмысленный шаг (атомарные коммиты, понятные сообщения).
 - Push ветки → Pull Request → CI должен быть зелёным.
@@ -125,11 +127,11 @@ session-scope ломает изоляцию.
 
 GitHub Actions, workflow `.github/workflows/ci.yml`, триггеры: push в любую
 `phase/*` и pull_request в `main`. Джобы:
-- `setup`: Python 3.11, установка `requirements.txt` (+ кэш зависимостей).
-- `lint`: `ruff` (стиль/ошибки) — не блокирует на старте, потом блокирует.
-- `test`: `pytest -q` + `pytest-cov`, порог покрытия (fail-under=90 для
-  бизнес-логики).
-Зелёный CI — обязательное условие merge (branch protection rule).
+- `lint`: `ruff` — `continue-on-error: true` до Фазы 2, потом блокирует.
+- `test`: установка `requirements-dev.txt` (+ кэш pip), `pytest` +
+  `pytest-cov`. fail-under=90 для бизнес-логики включается с Фазы 2.
+Зелёный CI — обязательное условие merge, **соблюдается дисциплиной**
+(технический branch protection недоступен на free private repo).
 
 ### CD (Фаза 6)
 
@@ -202,23 +204,26 @@ bot_reminder/
 - `git init`, первый коммит каркаса.
 - `.gitignore`, `.env`, `.env.example`, `requirements.txt`,
   `DEVELOPMENT_LOG.md`.
-- Создать **GitHub-репозиторий**, запушить `main`.
-- Включить branch protection (запрет прямого push в `main`, требование
-  зелёного CI — активируется после Фазы 1).
-- **DoD:** репо на GitHub, `main` запушен, `.env` гарантированно вне git.
-- *Требует подтверждения (см. §9):* имя репо, видимость, способ создания
-  (нет `gh`).
+- Создать **private GitHub-репозиторий**, запушить `main`. ✅ Сделано:
+  `github.com/James7underland/bot_reminder`.
+- Branch protection: технически недоступен (Pro для private) → enforced
+  дисциплиной (решение §9).
+- **DoD:** репо на GitHub, `main` запушен, `.env`/токен вне git. ✅
 
 ### Фаза 1 — Окружение, инструменты, CI
 
-- Наполнить `.venv` из `requirements.txt`.
+> **Объединена с Фазой 2 в один PR (#1, ветка `phase/1-env-ci`).** Причина:
+> Фаза 1 добавляет CI, на старте тесты красные; влить красную Фазу 1 в
+> `main` нельзя («main всегда зелёный»). Делить — лишний churn. Поэтому
+> Фазы 1+2 доводятся до зелёного на одной ветке и мержатся вместе.
+
+- Наполнить `.venv` из `requirements-dev.txt`. ✅
 - `pyproject.toml`: pytest (`testpaths=tests`, `pythonpath=.`), coverage,
-  ruff.
-- **Настроить `.github/workflows/ci.yml`** (джобы setup/lint/test, кэш).
-- Подключить branch protection к статусу CI.
-- Тесты: `pytest -q` запускается (ожидаемо «красный» — нет `database.py`);
-  CI на ветке отрабатывает и корректно падает на тестах.
-- **DoD:** CI работает на PR; зависимости установлены.
+  ruff. ✅
+- **`.github/workflows/ci.yml`** (jobs lint/test, кэш pip). ✅
+- Тесты: `pytest` запускается, ожидаемо «красный» — подтверждён дефект
+  §2.2 (`no such table: tasks`). ✅
+- **DoD:** CI работает на PR (#1); зависимости установлены. ✅
 
 ### Фаза 2 — Слой данных (`config.py`, `database.py`)
 
@@ -228,10 +233,13 @@ bot_reminder/
   `DATABASE_PATH` (по умолчанию `./data/tasks.db`).
 - `database.py` по контракту §2.3; SQL изолирован, запросы
   параметризованы (задел под PostgreSQL).
-- Переписать `tests/conftest.py`: function-scope + temp-file БД.
-- Добавить негативные тесты, не ломая существующие.
-- **DoD:** все тесты `test_database.py` зелёные; покрытие ≥ 90%; CI зелёный;
-  merge в `main`.
+- Переписать `tests/conftest.py`: function-scope + temp-file БД. ✅
+- `database.py`: `completed` → Python `bool` (контракт §2.3). ✅
+- **DoD:** 8/8 тестов зелёные ✅; покрытие `database.py` **100%** ✅;
+  далее CI зелёный → merge PR #1. (config.py 80%: непокрыт только
+  `except ImportError` для опционального dotenv — не бизнес-логика.)
+- Остаток (негативные тесты на пустой `description`/тип `user_id`) —
+  можно добавить здесь же до merge или отдельным мелким PR.
 
 ### Фаза 3 — Ядро бота (`bot.py`)
 

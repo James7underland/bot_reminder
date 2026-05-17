@@ -1,21 +1,25 @@
 """
-Файл конфигурации для pytest.
+Конфигурация pytest.
+
+Фикстура даёт КАЖДОМУ тесту свежую файловую SQLite-базу во временной
+директории (function-scope) и патчит путь к БД в модуле `database`.
+
+Почему не `:memory:`: `database.get_connection()` открывает новое
+соединение на каждый вызов. У SQLite `:memory:` своя БД на каждое
+соединение — таблица, созданная в `init_db()`, не видна последующим
+вызовам (`no such table: tasks`). Временный файл живёт между соединениями
+и при этом изолирован по тесту.
 """
 import pytest
 from unittest.mock import patch
-# Импортируем функцию инициализации из database.py
-from database import init_db
 
-# Путь к временной базе данных в памяти
-TEST_DB_PATH = ":memory:"
+import database
 
-@pytest.fixture(scope="session", autouse=True)
-def setup_test_database():
-    """Фикстура для инициализации тестовой базы данных перед запуском тестов."""
-    # Подменяем путь к базе данных на :memory:
-    with patch('config.DATABASE_PATH', TEST_DB_PATH), \
-         patch('database.DATABASE_PATH', TEST_DB_PATH):
-        # Инициализируем базу данных
-        init_db()
-        yield # Выполняем тесты
-        # Здесь можно добавить код для очистки, если нужно
+
+@pytest.fixture(autouse=True)
+def test_db(tmp_path):
+    """Свежая изолированная БД на каждый тест."""
+    db_file = tmp_path / "test_tasks.db"
+    with patch.object(database, "DATABASE_PATH", str(db_file)):
+        database.init_db()
+        yield

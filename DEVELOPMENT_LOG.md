@@ -69,3 +69,42 @@ GitHub Actions. Созданы `.gitignore`, `.env.example`, `requirements.txt`,
 4.  Branch protection на `main` (требование зелёного CI).
 5.  Затем Фаза 2: `config.py`/`database.py` строго под тесты, с
     исправленной фикстурой БД.
+
+---
+
+## Этап 4: Фазы 1+2 — окружение, CI, зелёный слой данных
+
+**Дата:** 2026-05-17
+
+**Описание:** Фаза 1 и Фаза 2 объединены в один PR (#1, ветка
+`phase/1-env-ci`): Фаза 1 добавляет CI, но тесты на старте красные, а
+красную Фазу 1 нельзя влить в `main` («main всегда зелёный»); делить —
+лишний churn (одобрено пользователем — он предпочитает bundled PR).
+
+Фаза 1: зависимости установлены в `.venv` из `requirements-dev.txt`;
+добавлены `pyproject.toml` (pytest/coverage/ruff) и
+`.github/workflows/ci.yml` (jobs lint[non-blocking]/test, кэш pip).
+Локальный прогон подтвердил дефект §2.2: все 8 тестов падали с
+`sqlite3.OperationalError: no such table: tasks`.
+
+Фаза 2: `tests/conftest.py` переписан — function-scope фикстура с
+временной файловой БД (`tmp_path`) вместо `:memory:`+session (устранён
+§2.2). В `database.py.get_tasks` добавлено приведение `completed` к Python
+`bool` (контракт §2.3). Результат: **8/8 тестов зелёные**, покрытие
+`database.py` **100%**, `config.py` 80% (непокрыт только
+`except ImportError` опционального dotenv — не бизнес-логика).
+
+**Branch protection:** технически недоступен — и classic protection, и
+rulesets требуют GitHub Pro для private-репо (HTTP 403). Решение
+пользователя: оставляем private, правило «merge только зелёного»
+соблюдается **дисциплиной** (красные PR не мержатся). CI виден на каждом
+PR.
+
+**Статус:** Фаза 1 ✅. Фаза 2 — слой данных зелёный ✅; merge PR #1 в
+`main` после зелёного CI на GitHub.
+
+**Следующие шаги:**
+1.  Закоммитить Фазу 2 на `phase/1-env-ci`, дождаться зелёного CI.
+2.  Merge PR #1 в `main`. Включить `fail_under=90` в `pyproject.toml`.
+3.  Фаза 3 (ветка `phase/3-bot-core`): тесты на `parse_add_command` и
+    хендлеры (Telegram замокан), харденинг `bot.py`.
