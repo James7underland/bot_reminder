@@ -274,3 +274,33 @@ TOTAL 99.60%; ruff чист.
 **Следующие шаги:**
 1.  Merge PR #6 в `main`.
 2.  Фаза 5.4 — важные задачи (флаг `important`) + сортировки в `/list`.
+
+---
+
+## Этап 10: Фаза 5.4 — важные задачи + сортировки
+
+**Дата:** 2026-05-17
+
+**Описание:** Ветка `phase/5.4-important`. Колонка `important`
+(`CREATE TABLE` + идемпотентная миграция, тест legacy). `set_important`.
+`get_tasks` получил необязательный `sort` (белый список:
+`important`/`due`/`alpha`/`created`; `None`/неизвестное → `created_at` —
+SQL и поведение для существующих вызовов неизменны, контракт
+`test_database.py` сохранён; ORDER BY формируется только из whitelist,
+пользовательский ввод в SQL не попадает). В `get_tasks` добавлено
+приведение `important` к bool. Команды `/important`, `/unimportant`
+(общий хелпер `_set_important`), `/list <important|due|alpha|created>`;
+в выводе `/list` важные помечаются «[важно] ».
+
+Регрессия: сообщение об ошибке аргумента `/list` сохранило подстроку
+«ID списка» — тест `test_lists.test_list_filter_bad_id` остаётся зелёным.
+
+**Результат:** 117 тестов зелёные (+14 в `tests/test_important.py`);
+`bot.py`/`database.py`/`scheduler.py` 100%, `config.py` 80%,
+TOTAL 99.63%; ruff чист.
+
+**Статус:** Фаза 5.4 — зелёная локально ✅; PR #7 → merge после CI.
+
+**Следующие шаги:**
+1.  Merge PR #7 в `main`.
+2.  Фаза 5.5 — подзадачи (таблица `steps`) и заметки (поле `notes`).

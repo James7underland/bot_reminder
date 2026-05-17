@@ -34,7 +34,8 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             reminder_sent INTEGER NOT NULL DEFAULT 0,
             list_id INTEGER,
-            recurrence TEXT
+            recurrence TEXT,
+            important INTEGER NOT NULL DEFAULT 0
         )
     ''')
     cursor.execute('''
@@ -55,6 +56,10 @@ def init_db():
         cursor.execute("ALTER TABLE tasks ADD COLUMN list_id INTEGER")
     if "recurrence" not in columns:
         cursor.execute("ALTER TABLE tasks ADD COLUMN recurrence TEXT")
+    if "important" not in columns:
+        cursor.execute(
+            "ALTER TABLE tasks ADD COLUMN important INTEGER NOT NULL DEFAULT 0"
+        )
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована.")
@@ -86,13 +91,26 @@ def add_task(user_id: int, description: str, due_date: str | None = None) -> int
     logger.info(f"Добавлена задача для user_id={user_id}: '{description}' (ID: {task_id})")
     return task_id
 
-def get_tasks(user_id: int, completed: bool = False) -> list[dict]:
+# Белый список сортировок (никакой пользовательский ввод не идёт в SQL).
+_SORT_ORDERS = {
+    "important": "important DESC, created_at",
+    "due": "due_date IS NULL, due_date, created_at",
+    "alpha": "description COLLATE NOCASE",
+    "created": "created_at",
+}
+
+
+def get_tasks(
+    user_id: int, completed: bool = False, sort: str | None = None
+) -> list[dict]:
     """
     Возвращает список задач пользователя.
 
     Args:
         user_id: ID пользователя в Telegram.
         completed: Если True, возвращает выполненные задачи. Иначе - активные.
+        sort: important | due | alpha | created. По умолчанию (None) —
+            по времени создания (поведение неизменно).
 
     Returns:
         Список словарей с данными задач.
@@ -102,19 +120,21 @@ def get_tasks(user_id: int, completed: bool = False) -> list[dict]:
     cursor = conn.cursor()
 
     flag = 1 if completed else 0
+    order = _SORT_ORDERS.get(sort, "created_at")
     cursor.execute(
-        "SELECT * FROM tasks WHERE user_id = ? AND completed = ? ORDER BY created_at",
+        f"SELECT * FROM tasks WHERE user_id = ? AND completed = ? ORDER BY {order}",
         (user_id, flag),
     )
 
     rows = cursor.fetchall()
     conn.close()
 
-    # sqlite3.Row -> dict; completed приводим к Python bool (контракт тестов).
+    # sqlite3.Row -> dict; completed/important приводим к Python bool.
     result = []
     for row in rows:
         task = dict(row)
         task["completed"] = bool(task["completed"])
+        task["important"] = bool(task["important"])
         result.append(task)
     return result
 
@@ -444,3 +464,23 @@ def complete_task(task_id: int) -> dict | None:
         "next_due": next_due,
         "new_task_id": new_task_id,
     }
+
+
+# --- Важные задачи (Фаза 5.4) ---
+
+def set_important(task_id: int, important: bool) -> bool:
+    """Ставит/снимает флаг важности. False, если задачи нет."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE tasks SET important = ? WHERE id = ?",
+        (1 if important else 0, task_id),
+    )
+    rows_affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows_affected > 0:
+        logger.info("task=%s important=%s", task_id, important)
+        return True
+    logger.warning("set_important: task=%s not found", task_id)
+    return False
