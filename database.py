@@ -1,10 +1,14 @@
 """
 Модуль для работы с базой данных SQLite.
 """
+import calendar
 import logging
 import sqlite3
+from datetime import datetime, timedelta
 
 from config import DATABASE_PATH
+
+RECURRENCES = ("daily", "weekly", "monthly", "yearly")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -29,7 +33,8 @@ def init_db():
             completed BOOLEAN DEFAULT FALSE,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             reminder_sent INTEGER NOT NULL DEFAULT 0,
-            list_id INTEGER
+            list_id INTEGER,
+            recurrence TEXT
         )
     ''')
     cursor.execute('''
@@ -48,6 +53,8 @@ def init_db():
         )
     if "list_id" not in columns:
         cursor.execute("ALTER TABLE tasks ADD COLUMN list_id INTEGER")
+    if "recurrence" not in columns:
+        cursor.execute("ALTER TABLE tasks ADD COLUMN recurrence TEXT")
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована.")
@@ -340,3 +347,100 @@ def get_tasks_by_list(
         task["completed"] = bool(task["completed"])
         result.append(task)
     return result
+
+
+# --- Повторяющиеся задачи (Фаза 5.3) ---
+
+def _add_months(dt: datetime, months: int) -> datetime:
+    """Прибавляет месяцы, обрезая день до последнего дня целевого месяца."""
+    total = dt.month - 1 + months
+    year = dt.year + total // 12
+    month = total % 12 + 1
+    day = min(dt.day, calendar.monthrange(year, month)[1])
+    return dt.replace(year=year, month=month, day=day)
+
+
+def next_occurrence(due_date: str, recurrence: str) -> str:
+    """Следующая дата повторения. due_date — `YYYY-MM-DD HH:MM:SS`."""
+    dt = datetime.strptime(due_date, "%Y-%m-%d %H:%M:%S")
+    if recurrence == "daily":
+        nxt = dt + timedelta(days=1)
+    elif recurrence == "weekly":
+        nxt = dt + timedelta(days=7)
+    elif recurrence == "monthly":
+        nxt = _add_months(dt, 1)
+    elif recurrence == "yearly":
+        nxt = _add_months(dt, 12)
+    else:
+        raise ValueError(f"unknown recurrence: {recurrence}")
+    return nxt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def set_recurrence(task_id: int, recurrence: str | None) -> bool:
+    """Задаёт повтор (None — снять). False при неверном значении/нет задачи."""
+    if recurrence is not None and recurrence not in RECURRENCES:
+        logger.warning("set_recurrence: invalid value %r", recurrence)
+        return False
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE tasks SET recurrence = ? WHERE id = ?", (recurrence, task_id)
+    )
+    rows_affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows_affected > 0:
+        logger.info("task=%s recurrence=%s", task_id, recurrence)
+        return True
+    logger.warning("set_recurrence: task=%s not found", task_id)
+    return False
+
+
+def complete_task(task_id: int) -> dict | None:
+    """
+    Выполняет задачу. Если задача повторяющаяся и имеет due_date —
+    создаёт следующий экземпляр.
+
+    Возвращает {completed, recurred, next_due, new_task_id} либо None,
+    если задачи нет.
+    """
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
+    row = cursor.fetchone()
+    if row is None:
+        conn.close()
+        logger.warning("complete_task: task=%s not found", task_id)
+        return None
+
+    cursor.execute("UPDATE tasks SET completed = 1 WHERE id = ?", (task_id,))
+
+    recurred = False
+    next_due = None
+    new_task_id = None
+    if row["recurrence"] in RECURRENCES and row["due_date"]:
+        next_due = next_occurrence(row["due_date"], row["recurrence"])
+        cursor.execute(
+            "INSERT INTO tasks (user_id, description, due_date, list_id, "
+            "recurrence) VALUES (?, ?, ?, ?, ?)",
+            (
+                row["user_id"],
+                row["description"],
+                next_due,
+                row["list_id"],
+                row["recurrence"],
+            ),
+        )
+        new_task_id = cursor.lastrowid
+        recurred = True
+
+    conn.commit()
+    conn.close()
+    logger.info("task=%s completed (recurred=%s)", task_id, recurred)
+    return {
+        "completed": True,
+        "recurred": recurred,
+        "next_due": next_due,
+        "new_task_id": new_task_id,
+    }
