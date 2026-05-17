@@ -326,17 +326,30 @@ bot_reminder/
 > **Фаза 5 завершена полностью (5.1–5.8) — достигнут паритет с
 > Microsoft To Do.** Далее — Фаза 6 (PostgreSQL, VPS, CD).
 
-### Фаза 6 — PostgreSQL, усиление, деплой на VPS, CD
+### Фаза 6 — усиление, деплой на VPS, CD
 
-- **Миграция SQLite → PostgreSQL:** ввести `db/`-слой (если ещё плоский),
-  драйвер `psycopg`, перенос схемы/данных, переключение по `DATABASE_URL`.
-  Тесты гоняются против обеих СУБД (или PG в CI-сервисе-контейнере).
-- Логирование, graceful shutdown, ретраи Telegram.
-- `.github/workflows/deploy.yml`: деплой по SSH на **VPS** при merge в
-  `main`, `systemd`-юнит (автоперезапуск), бэкап БД перед деплоем.
-- GitHub Secrets: SSH-ключ, `DATABASE_URL`, токен прод-бота.
-- **DoD:** бот 24/7 на VPS на PostgreSQL, CD по merge в `main` работает,
-  CI/CD зелёные, бэкап настроен.
+Разбита на 6a (автономно) и 6b (требует VPS/решения).
+
+**Фаза 6a — автономная инфраструктура. ✅ (PR #12)**
+- Bump GitHub Actions до Node 24 (`checkout@v5`, `setup-python@v6`) —
+  снят deprecation-warning (дедлайн 2026-06-02).
+- `.github/workflows/deploy.yml`: SSH-деплой при push в `main`;
+  **безопасный no-op без секретов** (gate-шаг → success+skip, история
+  `main` не краснеет).
+- `deploy/bot_reminder.service` (systemd, `Restart=always`),
+  `deploy/backup.sh` (`sqlite3 .backup` + ротация 14), `DEPLOYMENT.md`
+  (runbook для шагов, требующих сервера).
+- Харденинг: глобальный `error_handler` (логирует необработанные
+  исключения), зарегистрирован в приложении.
+- 172 теста, покрытие 99.78%, ruff чист.
+
+**Фаза 6b — требует пользователя / отдельным решением:**
+- VPS (хост/SSH), GitHub Secrets (`DEPLOY_HOST/USER/SSH_KEY`),
+  `.env` с новым токеном → «оживление» CD по runbook.
+- **PostgreSQL** (отложено сознательно): SQLite достаточно для одного
+  процесса; SQL изолирован в `database.py`, миграция — отдельная фаза по
+  реальной потребности (`psycopg`, `DATABASE_URL`, PG-сервис в CI).
+- **DoD 6b:** бот 24/7 на VPS, CD по merge в `main` работает.
 
 ---
 

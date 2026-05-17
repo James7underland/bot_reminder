@@ -429,3 +429,38 @@ TOTAL 99.78%; ruff чист.
 1.  Merge PR #11 в `main`.
 2.  Фаза 6 — миграция на PostgreSQL, харденинг, деплой на VPS, CD
     (GitHub Actions → SSH), `systemd`, бэкап БД.
+
+---
+
+## Этап 15: Фаза 6a — автономная деплой-инфраструктура + харденинг
+
+**Дата:** 2026-05-17
+
+**Описание:** Ветка `phase/6a-deploy-hardening`. По решению (пользователь:
+«делай, что считаешь нужным») сделана автономная часть Фазы 6 — без VPS,
+без PostgreSQL. Аргументация порядка (деплой на SQLite раньше Postgres)
+зафиксирована в ответе ассистента и `DEPLOYMENT.md` §5.
+
+- **CI:** bump `actions/checkout@v4→v5`, `actions/setup-python@v5→v6`
+  (Node 24; снят deprecation-warning, дедлайн 2026-06-02). Это закрывает
+  ранее заведённую задачу-чип.
+- **`.github/workflows/deploy.yml`:** SSH-деплой при push в `main`;
+  gate-шаг проверяет наличие `DEPLOY_HOST`/`DEPLOY_SSH_KEY` и при их
+  отсутствии завершает джобу success со «skip» — `main` не краснеет до
+  настройки секретов.
+- **`deploy/bot_reminder.service`** (systemd, `Restart=always`,
+  `EnvironmentFile=.env`), **`deploy/backup.sh`** (`sqlite3 .backup` +
+  ротация 14), **`DEPLOYMENT.md`** (пошаговый runbook: подготовка VPS,
+  systemd, cron-бэкап, GitHub Secrets, заметка про PostgreSQL).
+- **Харденинг:** глобальный `error_handler` (логирует необработанные
+  исключения через `exc_info`), `application.add_error_handler(...)`.
+
+**Результат:** 172 теста зелёные (+1 `tests/test_hardening.py`);
+`bot.py`/`database.py`/`scheduler.py`/`tzutil.py` 100%, `config.py` 80%,
+TOTAL 99.78%; ruff чист.
+
+**Статус:** Фаза 6a — зелёная локально ✅; PR #12 → merge после CI.
+
+**Осталось (Фаза 6b, требует пользователя):**
+1.  VPS + GitHub Secrets + `.env` с новым токеном → CD по runbook.
+2.  PostgreSQL — отдельной фазой по реальной потребности.

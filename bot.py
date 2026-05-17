@@ -727,6 +727,11 @@ async def timezone_command(
         )
 
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Глобальный обработчик: логирует необработанные исключения."""
+    logger.error("Unhandled exception", exc_info=context.error)
+
+
 def main() -> None:  # pragma: no cover
     """Запускает бота (сетевой polling — вне unit-тестов)."""
     if not TELEGRAM_BOT_TOKEN:
@@ -768,6 +773,7 @@ def main() -> None:  # pragma: no cover
     application.add_handler(CommandHandler("search", search_command))
     application.add_handler(CommandHandler("remindbefore", remindbefore_command))
     application.add_handler(CommandHandler("timezone", timezone_command))
+    application.add_error_handler(error_handler)
 
     # Планировщик напоминаний (APScheduler)
     setup_scheduler(application)
