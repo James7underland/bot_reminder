@@ -6,7 +6,7 @@
 APScheduler (вне unit-тестов).
 """
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -26,8 +26,11 @@ async def check_and_send_reminders(bot, now: datetime | None = None) -> int:
     отправки задача помечается `reminder_sent=1`, поэтому повторный вызов
     её не возьмёт. При ошибке отправки задача НЕ помечается — повтор на
     следующем тике (приоритет — доставить напоминание).
+
+    `now` по умолчанию — текущее UTC (наивная строка), т.к. `due_date`
+    хранится в UTC (Фаза 5.8).
     """
-    now = now or datetime.now()
+    now = now or datetime.now(UTC).replace(tzinfo=None)
     now_str = now.strftime(_TIME_FMT)
     sent = 0
     for task in get_due_tasks(now_str):
