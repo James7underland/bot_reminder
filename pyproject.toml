@@ -16,7 +16,7 @@ omit = ["tests/*"]
 
 [tool.coverage.report]
 show_missing = true
-# fail_under включается в Фазе 2, когда тесты должны быть зелёными.
+fail_under = 90
 
 [tool.ruff]
 line-length = 100

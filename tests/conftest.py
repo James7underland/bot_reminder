@@ -10,8 +10,9 @@
 вызовам (`no such table: tasks`). Временный файл живёт между соединениями
 и при этом изолирован по тесту.
 """
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 import database
 

@@ -1,16 +1,14 @@
 """
 Модуль для работы с базой данных SQLite.
 """
-import sqlite3
 import logging
-from typing import List, Dict, Optional
+import sqlite3
 
-# Настройка логирования
+from config import DATABASE_PATH
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Импорт пути к базе данных из конфига
-from config import DATABASE_PATH
 
 def get_connection():
     """Создает и возвращает соединение с базой данных. Включает поддержку внешних ключей."""
@@ -36,7 +34,7 @@ def init_db():
     conn.close()
     logger.info("База данных инициализирована.")
 
-def add_task(user_id: int, description: str, due_date: Optional[str] = None) -> int:
+def add_task(user_id: int, description: str, due_date: str | None = None) -> int:
     """
     Добавляет новую задачу.
 
@@ -63,7 +61,7 @@ def add_task(user_id: int, description: str, due_date: Optional[str] = None) -> 
     logger.info(f"Добавлена задача для user_id={user_id}: '{description}' (ID: {task_id})")
     return task_id
 
-def get_tasks(user_id: int, completed: bool = False) -> List[Dict]:
+def get_tasks(user_id: int, completed: bool = False) -> list[dict]:
     """
     Возвращает список задач пользователя.
 
@@ -77,12 +75,13 @@ def get_tasks(user_id: int, completed: bool = False) -> List[Dict]:
     conn = get_connection()
     conn.row_factory = sqlite3.Row # Для доступа к полям по имени
     cursor = conn.cursor()
-    
-    if completed:
-        cursor.execute('SELECT * FROM tasks WHERE user_id = ? AND completed = 1 ORDER BY created_at', (user_id,))
-    else:
-        cursor.execute('SELECT * FROM tasks WHERE user_id = ? AND completed = 0 ORDER BY created_at', (user_id,))
-    
+
+    flag = 1 if completed else 0
+    cursor.execute(
+        "SELECT * FROM tasks WHERE user_id = ? AND completed = ? ORDER BY created_at",
+        (user_id, flag),
+    )
+
     rows = cursor.fetchall()
     conn.close()
 
