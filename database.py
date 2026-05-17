@@ -17,7 +17,7 @@ def get_connection():
     return conn
 
 def init_db():
-    """Инициализирует базу данных, создавая таблицу tasks, если она не существует."""
+    """Создаёт таблицу tasks и применяет миграции (идемпотентно)."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute('''
@@ -27,9 +27,16 @@ def init_db():
             description TEXT NOT NULL,
             due_date TEXT,
             completed BOOLEAN DEFAULT FALSE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            reminder_sent INTEGER NOT NULL DEFAULT 0
         )
     ''')
+    # Миграция для БД, созданных до Фазы 4 (колонки могло не быть).
+    columns = {row[1] for row in cursor.execute("PRAGMA table_info(tasks)")}
+    if "reminder_sent" not in columns:
+        cursor.execute(
+            "ALTER TABLE tasks ADD COLUMN reminder_sent INTEGER NOT NULL DEFAULT 0"
+        )
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована.")
@@ -129,7 +136,10 @@ def set_reminder(task_id: int, due_date: str) -> bool:
     """
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute('UPDATE tasks SET due_date = ? WHERE id = ?', (due_date, task_id))
+    cursor.execute(
+        "UPDATE tasks SET due_date = ?, reminder_sent = 0 WHERE id = ?",
+        (due_date, task_id),
+    )
     rows_affected = cursor.rowcount
     conn.commit()
     conn.close()
@@ -139,3 +149,38 @@ def set_reminder(task_id: int, due_date: str) -> bool:
     else:
         logger.warning(f"Задача ID={task_id} не найдена при установке напоминания.")
         return False
+
+
+def get_due_tasks(now: str) -> list[dict]:
+    """
+    Задачи, для которых наступило время напоминания и оно ещё не отправлено.
+
+    `now` — строка `YYYY-MM-DD HH:MM:SS` (тот же формат, что в `due_date`);
+    лексикографическое сравнение для этого формата эквивалентно временно́му.
+    """
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM tasks WHERE completed = 0 AND reminder_sent = 0 "
+        "AND due_date IS NOT NULL AND due_date <= ? ORDER BY due_date",
+        (now,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def mark_reminder_sent(task_id: int) -> bool:
+    """Помечает напоминание задачи отправленным (анти-дубль)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE tasks SET reminder_sent = 1 WHERE id = ?", (task_id,))
+    rows_affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows_affected > 0:
+        logger.info("reminder_sent=1 for task=%s", task_id)
+        return True
+    logger.warning("mark_reminder_sent: task=%s not found", task_id)
+    return False
