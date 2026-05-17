@@ -25,6 +25,7 @@ from database import (
     get_task,
     get_tasks,
     get_tasks_by_list,
+    get_timezone,
     init_db,
     mark_step_done,
     mark_task_undone,
@@ -36,9 +37,11 @@ from database import (
     set_recurrence,
     set_remind_before,
     set_reminder,
+    set_timezone,
     update_task_description,
 )
 from scheduler import setup_scheduler
+from tzutil import to_local, to_utc
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -133,7 +136,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/delnote <task_id> - Удалить заметку\n"
         "/myday [add|remove <id>] - «Мой день» (на сегодня)\n"
         "/search <текст> - Поиск по задачам\n"
-        "/remindbefore <task_id> <минут|off> - Напомнить за N мин до срока"
+        "/remindbefore <task_id> <минут|off> - Напомнить за N мин до срока\n"
+        "/timezone [IANA] - Показать/задать часовой пояс (напр. Europe/Moscow)"
     )
     await update.message.reply_text(help_text)
 
@@ -151,13 +155,17 @@ async def add_task_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     try:
-        task_id = add_task(user_id, description, due_date)
+        # Пользователь вводит время в своём поясе; храним в UTC.
+        due_store = (
+            to_utc(due_date, get_timezone(user_id)) if due_date else None
+        )
+        task_id = add_task(user_id, description, due_store)
         if due_date:
             msg = f'Задача "{description}" добавлена! Напоминание: {due_date}.'
         else:
             msg = f'Задача "{description}" добавлена! Без напоминания.'
         await update.message.reply_text(msg)
-        logger.info("user=%s added task=%s due=%s", user_id, task_id, due_date)
+        logger.info("user=%s added task=%s due=%s", user_id, task_id, due_store)
     except Exception as e:
         logger.error("add_task failed for user=%s: %s", user_id, e)
         await update.message.reply_text("Произошла ошибка при добавлении задачи.")
@@ -193,10 +201,14 @@ async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text("У вас пока нет активных задач.")
         return
 
-    # Форматируем список задач
+    # Форматируем список задач (due_date показываем в поясе пользователя)
+    tz = get_timezone(user_id)
     task_list = header
     for task in tasks:
-        due_str = f", напоминание: {task['due_date']}" if task['due_date'] else ""
+        if task["due_date"]:
+            due_str = f", напоминание: {to_local(task['due_date'], tz)}"
+        else:
+            due_str = ""
         rec = task.get("recurrence")
         rec_str = f" (повтор: {rec})" if rec else ""
         imp_str = "[важно] " if task.get("important") else ""
@@ -274,8 +286,11 @@ async def reschedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             "Не понял дату. Форматы: YYYY-MM-DD HH:MM или DD.MM.YYYY HH:MM."
         )
         return
-    if set_reminder(task_id, due):
-        await update.message.reply_text(f"Напоминание №{task_id} перенесено на {due}.")
+    due_store = to_utc(due, get_timezone(update.effective_user.id))
+    if set_reminder(task_id, due_store):
+        await update.message.reply_text(
+            f"Напоминание №{task_id} перенесено на {due}."
+        )
     else:
         await update.message.reply_text(f"Задача №{task_id} не найдена.")
 
@@ -692,6 +707,26 @@ async def remindbefore_command(
         )
 
 
+async def timezone_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Показывает/задаёт часовой пояс: /timezone [IANA]."""
+    user_id = update.effective_user.id
+    if not context.args:
+        tz = get_timezone(user_id)
+        await update.message.reply_text(
+            f"Ваш часовой пояс: {tz}. Сменить: /timezone Europe/Moscow"
+        )
+        return
+    tz = context.args[0]
+    if set_timezone(user_id, tz):
+        await update.message.reply_text(f"Часовой пояс установлен: {tz}.")
+    else:
+        await update.message.reply_text(
+            f"Часовой пояс «{tz}» не распознан. Пример: Europe/Moscow."
+        )
+
+
 def main() -> None:  # pragma: no cover
     """Запускает бота (сетевой polling — вне unit-тестов)."""
     if not TELEGRAM_BOT_TOKEN:
@@ -732,6 +767,7 @@ def main() -> None:  # pragma: no cover
     application.add_handler(CommandHandler("myday", myday_command))
     application.add_handler(CommandHandler("search", search_command))
     application.add_handler(CommandHandler("remindbefore", remindbefore_command))
+    application.add_handler(CommandHandler("timezone", timezone_command))
 
     # Планировщик напоминаний (APScheduler)
     setup_scheduler(application)

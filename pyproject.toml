@@ -11,7 +11,7 @@ addopts = "-q"
 asyncio_mode = "auto"
 
 [tool.coverage.run]
-source = ["config", "database", "bot", "scheduler"]
+source = ["config", "database", "bot", "scheduler", "tzutil"]
 omit = ["tests/*"]
 
 [tool.coverage.report]

@@ -393,3 +393,39 @@ COALESCE(remind_before,0) || ' minutes')` — при NULL поведение
 1.  Merge PR #10 в `main`.
 2.  Фаза 5.8 — часовые пояса пользователя (хранить TZ, считать
     напоминания в TZ пользователя).
+
+---
+
+## Этап 14: Фаза 5.8 — часовые пояса (завершение Фазы 5)
+
+**Дата:** 2026-05-17
+
+**Описание:** Ветка `phase/5.8-timezones`. Таблица `user_settings`
+(`user_id` PK, `timezone`). Новый модуль `tzutil.py` (stdlib
+`zoneinfo`): `valid_timezone`, `to_utc`, `to_local`. Слой БД:
+`get_timezone` (дефолт `UTC`), `set_timezone` (валидирует зону, upsert).
+Канон хранения `due_date` — **UTC**: `/add` и `/reschedule`
+конвертируют введённое пользователем время из его пояса в UTC перед
+сохранением; `/list` показывает обратно в локальном поясе; `scheduler`
+сравнивает в UTC (дефолтное `now` → `datetime.now(UTC)`). Команда
+`/timezone [IANA]`. Ключевое свойство: дефолтный пояс `UTC` делает
+`to_utc`/`to_local` тождественными, поэтому контракт `add_task`/
+`get_tasks` и все 155 прежних тестов остаются зелёными без правок.
+`tzutil` добавлен в `[tool.coverage.run] source`. ruff-автофикс
+обновил `datetime.timezone.utc` → `datetime.UTC` (UP, Python 3.11).
+
+**Результат:** 171 тест зелёный (+16 в `tests/test_timezones.py`:
+tzutil, get/set_timezone, `/timezone`, интеграция /add→UTC,
+/list→локально, дефолтный пользователь без изменений);
+`bot.py`/`database.py`/`scheduler.py`/`tzutil.py` 100%, `config.py` 80%,
+TOTAL 99.78%; ruff чист.
+
+**Итог Фазы 5:** под-фазы 5.1–5.8 завершены и в `main` — достигнут
+функциональный паритет с Microsoft To Do.
+
+**Статус:** Фаза 5.8 — зелёная локально ✅; PR #11 → merge после CI.
+
+**Следующие шаги:**
+1.  Merge PR #11 в `main`.
+2.  Фаза 6 — миграция на PostgreSQL, харденинг, деплой на VPS, CD
+    (GitHub Actions → SSH), `systemd`, бэкап БД.

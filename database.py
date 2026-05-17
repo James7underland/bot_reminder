@@ -7,6 +7,7 @@ import sqlite3
 from datetime import datetime, timedelta
 
 from config import DATABASE_PATH
+from tzutil import valid_timezone
 
 RECURRENCES = ("daily", "weekly", "monthly", "yearly")
 
@@ -57,6 +58,12 @@ def init_db():
             completed INTEGER NOT NULL DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_settings (
+            user_id INTEGER PRIMARY KEY,
+            timezone TEXT NOT NULL DEFAULT 'UTC'
         )
     ''')
     # Миграции для БД, созданных до Фаз 4/5.2 (колонок могло не быть).
@@ -731,3 +738,35 @@ def set_remind_before(task_id: int, minutes: int | None) -> bool:
         return True
     logger.warning("set_remind_before: task=%s not found", task_id)
     return False
+
+
+# --- Часовые пояса пользователя (Фаза 5.8) ---
+
+def get_timezone(user_id: int) -> str:
+    """Часовой пояс пользователя (IANA). По умолчанию — UTC."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT timezone FROM user_settings WHERE user_id = ?", (user_id,)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else "UTC"
+
+
+def set_timezone(user_id: int, timezone: str) -> bool:
+    """Сохраняет часовой пояс пользователя. False, если зона неверная."""
+    if not valid_timezone(timezone):
+        logger.warning("set_timezone: invalid tz %r", timezone)
+        return False
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO user_settings (user_id, timezone) VALUES (?, ?) "
+        "ON CONFLICT(user_id) DO UPDATE SET timezone = excluded.timezone",
+        (user_id, timezone),
+    )
+    conn.commit()
+    conn.close()
+    logger.info("user=%s timezone=%s", user_id, timezone)
+    return True
