@@ -9,7 +9,15 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 from config import TELEGRAM_BOT_TOKEN
-from database import add_task, get_tasks, init_db, mark_task_done
+from database import (
+    add_task,
+    get_tasks,
+    init_db,
+    mark_task_done,
+    mark_task_undone,
+    set_reminder,
+    update_task_description,
+)
 from scheduler import setup_scheduler
 
 logging.basicConfig(
@@ -27,6 +35,20 @@ _DATE_FORMATS = (
 _COMMAND_RE = re.compile(r"^/add(?:@\w+)?\s*", re.IGNORECASE)
 
 
+def _match_due(body: str) -> tuple[re.Match, str] | None:
+    """Ищет первый валидный токен даты-времени. (match, нормализованная)."""
+    for fmt, pattern in _DATE_FORMATS:
+        match = re.search(pattern, body)
+        if not match:
+            continue
+        try:
+            dt = datetime.strptime(match.group(), fmt)
+        except ValueError:
+            continue
+        return match, dt.strftime("%Y-%m-%d %H:%M:%S")
+    return None
+
+
 def parse_add_command(text: str) -> tuple[str, str | None]:
     """
     Разбирает текст команды /add.
@@ -40,21 +62,19 @@ def parse_add_command(text: str) -> tuple[str, str | None]:
         `YYYY-MM-DD HH:MM:SS`.
     """
     body = _COMMAND_RE.sub("", text or "", count=1).strip()
+    found = _match_due(body)
+    if found is None:
+        return body, None
+    match, due_date = found
+    description = (body[: match.start()] + body[match.end():]).strip()
+    description = re.sub(r"\s{2,}", " ", description)
+    return description, due_date
 
-    for fmt, pattern in _DATE_FORMATS:
-        match = re.search(pattern, body)
-        if not match:
-            continue
-        try:
-            dt = datetime.strptime(match.group(), fmt)
-        except ValueError:
-            continue
-        due_date = dt.strftime("%Y-%m-%d %H:%M:%S")
-        description = (body[: match.start()] + body[match.end():]).strip()
-        description = re.sub(r"\s{2,}", " ", description)
-        return description, due_date
 
-    return body, None
+def parse_datetime(text: str) -> str | None:
+    """Парсит строку даты-времени в `YYYY-MM-DD HH:MM:SS` или None."""
+    found = _match_due((text or "").strip())
+    return found[1] if found else None
 
 # Обработчики команд
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -72,7 +92,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/help - Показать это сообщение\n"
         "/add <описание> [YYYY-MM-DD HH:MM] - Добавить задачу\n"
         "/list - Показать все активные задачи\n"
-        "/done <номер> - Отметить задачу как выполненную"
+        "/done <номер> - Отметить задачу как выполненную\n"
+        "/undone <номер> - Вернуть задачу в активные\n"
+        "/edit <номер> <описание> - Изменить описание\n"
+        "/reschedule <номер> <YYYY-MM-DD HH:MM> - Перенести напоминание"
     )
     await update.message.reply_text(help_text)
 
@@ -140,6 +163,66 @@ async def done_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(f"Задача №{task_id} не найдена или уже выполнена.")
 
 
+async def edit_task_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Изменяет описание задачи: /edit <id> <новое описание>."""
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text("Использование: /edit <id> <новое описание>")
+        return
+    try:
+        task_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("Номер задачи должен быть числом.")
+        return
+    description = " ".join(context.args[1:]).strip()
+    if not description:
+        await update.message.reply_text("Пожалуйста, укажите новое описание.")
+        return
+    if update_task_description(task_id, description):
+        await update.message.reply_text(f"Задача №{task_id} обновлена.")
+    else:
+        await update.message.reply_text(f"Задача №{task_id} не найдена.")
+
+
+async def reschedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Переносит напоминание: /reschedule <id> <YYYY-MM-DD HH:MM>."""
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text(
+            "Использование: /reschedule <id> <YYYY-MM-DD HH:MM>"
+        )
+        return
+    try:
+        task_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("Номер задачи должен быть числом.")
+        return
+    due = parse_datetime(" ".join(context.args[1:]))
+    if due is None:
+        await update.message.reply_text(
+            "Не понял дату. Форматы: YYYY-MM-DD HH:MM или DD.MM.YYYY HH:MM."
+        )
+        return
+    if set_reminder(task_id, due):
+        await update.message.reply_text(f"Напоминание №{task_id} перенесено на {due}.")
+    else:
+        await update.message.reply_text(f"Задача №{task_id} не найдена.")
+
+
+async def undone_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Возвращает выполненную задачу в активные: /undone <id>."""
+    if not context.args:
+        await update.message.reply_text("Использование: /undone <id>")
+        return
+    try:
+        task_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("Номер задачи должен быть числом.")
+        return
+    if mark_task_undone(task_id):
+        await update.message.reply_text(f"Задача №{task_id} снова активна.")
+    else:
+        await update.message.reply_text(f"Задача №{task_id} не найдена.")
+
+
 def main() -> None:  # pragma: no cover
     """Запускает бота (сетевой polling — вне unit-тестов)."""
     if not TELEGRAM_BOT_TOKEN:
@@ -159,6 +242,9 @@ def main() -> None:  # pragma: no cover
     application.add_handler(CommandHandler("add", add_task_command))
     application.add_handler(CommandHandler("list", list_tasks))
     application.add_handler(CommandHandler("done", done_task))
+    application.add_handler(CommandHandler("undone", undone_command))
+    application.add_handler(CommandHandler("edit", edit_task_command))
+    application.add_handler(CommandHandler("reschedule", reschedule_command))
 
     # Планировщик напоминаний (APScheduler)
     setup_scheduler(application)
