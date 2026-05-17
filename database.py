@@ -37,7 +37,8 @@ def init_db():
             recurrence TEXT,
             important INTEGER NOT NULL DEFAULT 0,
             notes TEXT,
-            myday_date TEXT
+            myday_date TEXT,
+            remind_before INTEGER
         )
     ''')
     cursor.execute('''
@@ -76,6 +77,8 @@ def init_db():
         cursor.execute("ALTER TABLE tasks ADD COLUMN notes TEXT")
     if "myday_date" not in columns:
         cursor.execute("ALTER TABLE tasks ADD COLUMN myday_date TEXT")
+    if "remind_before" not in columns:
+        cursor.execute("ALTER TABLE tasks ADD COLUMN remind_before INTEGER")
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована.")
@@ -209,15 +212,18 @@ def get_due_tasks(now: str) -> list[dict]:
     """
     Задачи, для которых наступило время напоминания и оно ещё не отправлено.
 
-    `now` — строка `YYYY-MM-DD HH:MM:SS` (тот же формат, что в `due_date`);
-    лексикографическое сравнение для этого формата эквивалентно временно́му.
+    `now` — строка `YYYY-MM-DD HH:MM:SS`. Учитывается `remind_before`
+    (минуты до срока): время срабатывания =
+    `due_date - remind_before` (при NULL — ровно `due_date`).
     """
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     cursor.execute(
         "SELECT * FROM tasks WHERE completed = 0 AND reminder_sent = 0 "
-        "AND due_date IS NOT NULL AND due_date <= ? ORDER BY due_date",
+        "AND due_date IS NOT NULL "
+        "AND datetime(due_date, '-' || COALESCE(remind_before, 0) "
+        "|| ' minutes') <= ? ORDER BY due_date",
         (now,),
     )
     rows = cursor.fetchall()
@@ -670,3 +676,58 @@ def get_myday(user_id: int, day: str) -> list[dict]:
         task["important"] = bool(task["important"])
         result.append(task)
     return result
+
+
+# --- Поиск и гибкие напоминания (Фаза 5.7) ---
+
+def search_tasks(user_id: int, query: str) -> list[dict]:
+    """
+    Активные задачи пользователя, где подстрока `query` встречается в
+    описании или заметке (регистронезависимо, в т.ч. для кириллицы —
+    фильтрация на стороне Python через str.lower()).
+    """
+    q = (query or "").strip().lower()
+    if not q:
+        return []
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM tasks WHERE user_id = ? AND completed = 0 "
+        "ORDER BY created_at",
+        (user_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    result = []
+    for row in rows:
+        task = dict(row)
+        haystack = f"{task['description']}\n{task['notes'] or ''}".lower()
+        if q in haystack:
+            task["completed"] = bool(task["completed"])
+            task["important"] = bool(task["important"])
+            result.append(task)
+    return result
+
+
+def set_remind_before(task_id: int, minutes: int | None) -> bool:
+    """
+    Задаёт напоминание за `minutes` минут до срока (None — ровно в срок).
+    False при отрицательном значении или если задачи нет.
+    """
+    if minutes is not None and minutes < 0:
+        logger.warning("set_remind_before: negative minutes %s", minutes)
+        return False
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE tasks SET remind_before = ? WHERE id = ?", (minutes, task_id)
+    )
+    rows_affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows_affected > 0:
+        logger.info("task=%s remind_before=%s", task_id, minutes)
+        return True
+    logger.warning("set_remind_before: task=%s not found", task_id)
+    return False

@@ -30,9 +30,11 @@ from database import (
     mark_task_undone,
     remove_from_myday,
     rename_list,
+    search_tasks,
     set_important,
     set_note,
     set_recurrence,
+    set_remind_before,
     set_reminder,
     update_task_description,
 )
@@ -129,7 +131,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/delstep <step_id> - Удалить подзадачу\n"
         "/note <task_id> [текст] - Показать/задать заметку\n"
         "/delnote <task_id> - Удалить заметку\n"
-        "/myday [add|remove <id>] - «Мой день» (на сегодня)"
+        "/myday [add|remove <id>] - «Мой день» (на сегодня)\n"
+        "/search <текст> - Поиск по задачам\n"
+        "/remindbefore <task_id> <минут|off> - Напомнить за N мин до срока"
     )
     await update.message.reply_text(help_text)
 
@@ -627,6 +631,67 @@ async def myday_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text(text)
 
 
+async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Поиск по активным задачам: /search <текст>."""
+    user_id = update.effective_user.id
+    query = " ".join(context.args).strip() if context.args else ""
+    if not query:
+        await update.message.reply_text("Использование: /search <текст>")
+        return
+    tasks = search_tasks(user_id, query)
+    if not tasks:
+        await update.message.reply_text(
+            f"По запросу «{query}» ничего не найдено."
+        )
+        return
+    text = f"Найдено по «{query}»:\n"
+    for task in tasks:
+        due_str = (
+            f", напоминание: {task['due_date']}" if task["due_date"] else ""
+        )
+        text += f"• {task['id']}. {task['description']}{due_str}\n"
+    await update.message.reply_text(text)
+
+
+async def remindbefore_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Напоминание за N минут до срока: /remindbefore <task_id> <минут|off>."""
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text(
+            "Использование: /remindbefore <task_id> <минут|off>"
+        )
+        return
+    try:
+        task_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("ID задачи должен быть числом.")
+        return
+    raw = context.args[1].lower()
+    if raw in ("off", "0", "нет"):
+        minutes: int | None = None
+    else:
+        try:
+            minutes = int(raw)
+        except ValueError:
+            await update.message.reply_text("Минуты — число или off.")
+            return
+        if minutes < 0:
+            await update.message.reply_text("Минуты не могут быть < 0.")
+            return
+    if not set_remind_before(task_id, minutes):
+        await update.message.reply_text(f"Задача №{task_id} не найдена.")
+        return
+    if minutes is None:
+        await update.message.reply_text(
+            f"Напоминание для №{task_id} — ровно в срок."
+        )
+    else:
+        await update.message.reply_text(
+            f"Напоминание для №{task_id} — за {minutes} мин до срока."
+        )
+
+
 def main() -> None:  # pragma: no cover
     """Запускает бота (сетевой polling — вне unit-тестов)."""
     if not TELEGRAM_BOT_TOKEN:
@@ -665,6 +730,8 @@ def main() -> None:  # pragma: no cover
     application.add_handler(CommandHandler("note", note_command))
     application.add_handler(CommandHandler("delnote", delnote_command))
     application.add_handler(CommandHandler("myday", myday_command))
+    application.add_handler(CommandHandler("search", search_command))
+    application.add_handler(CommandHandler("remindbefore", remindbefore_command))
 
     # Планировщик напоминаний (APScheduler)
     setup_scheduler(application)
