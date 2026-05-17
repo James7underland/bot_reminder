@@ -1,0 +1,172 @@
+"""Фаза 5.3: тесты повторяющихся задач."""
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+import bot
+from database import add_task, complete_task, get_tasks, next_occurrence, set_recurrence
+
+
+def make_update(user_id=42):
+    update = MagicMock()
+    update.effective_user.id = user_id
+    update.message.reply_text = AsyncMock()
+    return update
+
+
+def make_context(args):
+    ctx = MagicMock()
+    ctx.args = args
+    return ctx
+
+
+def reply(update):
+    return update.message.reply_text.call_args.args[0]
+
+
+# --- next_occurrence ---
+
+@pytest.mark.parametrize(
+    "due, rec, expected",
+    [
+        ("2026-05-17 09:00:00", "daily", "2026-05-18 09:00:00"),
+        ("2026-05-17 09:00:00", "weekly", "2026-05-24 09:00:00"),
+        ("2026-01-15 10:00:00", "monthly", "2026-02-15 10:00:00"),
+        ("2026-01-31 10:00:00", "monthly", "2026-02-28 10:00:00"),  # clamp
+        ("2026-12-31 10:00:00", "monthly", "2027-01-31 10:00:00"),  # rollover
+        ("2026-05-17 09:00:00", "yearly", "2027-05-17 09:00:00"),
+        ("2024-02-29 09:00:00", "yearly", "2025-02-28 09:00:00"),  # leap clamp
+    ],
+)
+def test_next_occurrence(due, rec, expected):
+    assert next_occurrence(due, rec) == expected
+
+
+def test_next_occurrence_invalid():
+    with pytest.raises(ValueError):
+        next_occurrence("2026-05-17 09:00:00", "hourly")
+
+
+# --- set_recurrence ---
+
+def test_set_recurrence_lifecycle():
+    tid = add_task(1, "t")
+    assert set_recurrence(tid, "daily") is True
+    assert get_tasks(1)[0]["recurrence"] == "daily"
+    assert set_recurrence(tid, None) is True
+    assert get_tasks(1)[0]["recurrence"] is None
+
+
+def test_set_recurrence_invalid_value():
+    tid = add_task(1, "t")
+    assert set_recurrence(tid, "bogus") is False
+
+
+def test_set_recurrence_nonexistent():
+    assert set_recurrence(999999, "daily") is False
+
+
+# --- complete_task ---
+
+def test_complete_task_nonrecurring():
+    tid = add_task(1, "x")
+    res = complete_task(tid)
+    assert res == {
+        "completed": True,
+        "recurred": False,
+        "next_due": None,
+        "new_task_id": None,
+    }
+    assert get_tasks(1) == []
+    assert [t["id"] for t in get_tasks(1, completed=True)] == [tid]
+
+
+def test_complete_task_nonexistent():
+    assert complete_task(999999) is None
+
+
+def test_complete_task_recurring_spawns_next():
+    tid = add_task(1, "standup", "2026-05-17 09:00:00")
+    set_recurrence(tid, "daily")
+
+    res = complete_task(tid)
+
+    assert res["recurred"] is True
+    assert res["next_due"] == "2026-05-18 09:00:00"
+    assert isinstance(res["new_task_id"], int)
+
+    active = get_tasks(1)
+    assert len(active) == 1
+    nxt = active[0]
+    assert nxt["id"] == res["new_task_id"]
+    assert nxt["description"] == "standup"
+    assert nxt["due_date"] == "2026-05-18 09:00:00"
+    assert nxt["recurrence"] == "daily"
+    assert [t["id"] for t in get_tasks(1, completed=True)] == [tid]
+
+
+def test_complete_task_recurring_without_due_does_not_spawn():
+    tid = add_task(1, "no due")
+    set_recurrence(tid, "weekly")
+    res = complete_task(tid)
+    assert res["recurred"] is False
+    assert get_tasks(1) == []
+
+
+# --- /repeat ---
+
+async def test_repeat_usage():
+    u = make_update()
+    await bot.repeat_command(u, make_context(["7"]))
+    assert "Использование" in reply(u)
+
+
+async def test_repeat_non_int():
+    u = make_update()
+    await bot.repeat_command(u, make_context(["abc", "daily"]))
+    assert "числом" in reply(u).lower()
+
+
+async def test_repeat_invalid_value():
+    u = make_update()
+    await bot.repeat_command(u, make_context(["7", "hourly"]))
+    assert "допустимо" in reply(u).lower()
+
+
+async def test_repeat_off_clears():
+    u = make_update()
+    with patch.object(bot, "set_recurrence", return_value=True) as m:
+        await bot.repeat_command(u, make_context(["7", "off"]))
+    m.assert_called_once_with(7, None)
+    assert "отключён" in reply(u).lower()
+
+
+async def test_repeat_sets_value():
+    u = make_update()
+    with patch.object(bot, "set_recurrence", return_value=True) as m:
+        await bot.repeat_command(u, make_context(["7", "weekly"]))
+    m.assert_called_once_with(7, "weekly")
+    assert "weekly" in reply(u)
+
+
+async def test_repeat_not_found():
+    u = make_update()
+    with patch.object(bot, "set_recurrence", return_value=False):
+        await bot.repeat_command(u, make_context(["7", "daily"]))
+    assert "не найдена" in reply(u).lower()
+
+
+# --- /done с повтором ---
+
+async def test_done_recurring_message():
+    u = make_update()
+    res = {
+        "completed": True,
+        "recurred": True,
+        "next_due": "2026-05-18 09:00:00",
+        "new_task_id": 2,
+    }
+    with patch.object(bot, "complete_task", return_value=res):
+        await bot.done_task(u, make_context(["1"]))
+    out = reply(u)
+    assert "2026-05-18 09:00:00" in out and "повторение" in out.lower()

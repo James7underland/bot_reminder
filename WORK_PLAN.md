@@ -289,7 +289,11 @@ bot_reminder/
   (задачи → без списка)/`assign_task_to_list`/`get_tasks_by_list`;
   команды `/lists`, `/newlist`, `/renamelist`, `/dellist`, `/movetask`,
   `/list <id|0>`; 81 тест, покрытие 99.52%. PR #5.
-- 5.3 Повторяющиеся задачи.
+- 5.3 Повторяющиеся задачи. ✅ Колонка `recurrence` (миграция);
+  `next_occurrence` (daily/weekly/monthly/yearly + clamp конца месяца и
+  високос), `set_recurrence`, `complete_task` (выполняет и спавнит
+  следующий экземпляр); `/repeat`, `/done` сообщает о повторе, `/list`
+  показывает повтор; 103 теста, покрытие 99.60%. PR #6.
 - 5.4 Важные задачи + сортировки.
 - 5.5 Подзадачи и заметки.
 - 5.6 «Мой день».

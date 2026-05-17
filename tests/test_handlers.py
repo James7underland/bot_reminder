@@ -99,14 +99,15 @@ async def test_done_rejects_non_int():
 
 async def test_done_success():
     update = make_update()
-    with patch.object(bot, "mark_task_done", return_value=True) as m:
+    res = {"completed": True, "recurred": False, "next_due": None, "new_task_id": None}
+    with patch.object(bot, "complete_task", return_value=res) as m:
         await bot.done_task(update, make_context(args=["5"]))
     m.assert_called_once_with(5)
-    assert "выполненная" in reply(update).lower()
+    assert "выполнена" in reply(update).lower()
 
 
 async def test_done_not_found():
     update = make_update()
-    with patch.object(bot, "mark_task_done", return_value=False):
+    with patch.object(bot, "complete_task", return_value=None):
         await bot.done_task(update, make_context(args=["999"]))
     assert "не найдена" in reply(update).lower()

@@ -10,17 +10,19 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 
 from config import TELEGRAM_BOT_TOKEN
 from database import (
+    RECURRENCES,
     add_task,
     assign_task_to_list,
+    complete_task,
     create_list,
     delete_list,
     get_lists,
     get_tasks,
     get_tasks_by_list,
     init_db,
-    mark_task_done,
     mark_task_undone,
     rename_list,
+    set_recurrence,
     set_reminder,
     update_task_description,
 )
@@ -106,7 +108,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/newlist <имя> - Создать список\n"
         "/renamelist <id> <имя> - Переименовать список\n"
         "/dellist <id> - Удалить список (задачи останутся без списка)\n"
-        "/movetask <task_id> <list_id|0> - Переместить задачу в список"
+        "/movetask <task_id> <list_id|0> - Переместить задачу в список\n"
+        "/repeat <номер> <daily|weekly|monthly|yearly|off> - Повтор задачи"
     )
     await update.message.reply_text(help_text)
 
@@ -165,7 +168,9 @@ async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     task_list = header
     for task in tasks:
         due_str = f", напоминание: {task['due_date']}" if task['due_date'] else ""
-        task_list += f"• {task['id']}. {task['description']}{due_str}\n"
+        rec = task.get("recurrence")
+        rec_str = f" (повтор: {rec})" if rec else ""
+        task_list += f"• {task['id']}. {task['description']}{due_str}{rec_str}\n"
 
     await update.message.reply_text(task_list)
 
@@ -183,12 +188,20 @@ async def done_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Номер задачи должен быть числом.")
         return
 
-    success = mark_task_done(task_id)
-    if success:
-        await update.message.reply_text(f"Задача №{task_id} отмечена как выполненная!")
-        logger.info("user=%s marked task=%s done", update.effective_user.id, task_id)
+    result = complete_task(task_id)
+    if result is None:
+        await update.message.reply_text(
+            f"Задача №{task_id} не найдена или уже выполнена."
+        )
+        return
+    if result["recurred"]:
+        await update.message.reply_text(
+            f"Задача №{task_id} выполнена. "
+            f"Следующее повторение: {result['next_due']}."
+        )
     else:
-        await update.message.reply_text(f"Задача №{task_id} не найдена или уже выполнена.")
+        await update.message.reply_text(f"Задача №{task_id} выполнена!")
+    logger.info("user=%s completed task=%s", update.effective_user.id, task_id)
 
 
 async def edit_task_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -340,6 +353,39 @@ async def movetask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text(f"Задача №{task_id} не найдена.")
 
 
+async def repeat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Задаёт повтор: /repeat <id> <daily|weekly|monthly|yearly|off>."""
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text(
+            "Использование: /repeat <id> <daily|weekly|monthly|yearly|off>"
+        )
+        return
+    try:
+        task_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("Номер задачи должен быть числом.")
+        return
+    value = context.args[1].lower()
+    if value in ("off", "none", "нет"):
+        recurrence: str | None = None
+    elif value in RECURRENCES:
+        recurrence = value
+    else:
+        await update.message.reply_text(
+            "Допустимо: daily, weekly, monthly, yearly или off."
+        )
+        return
+    if not set_recurrence(task_id, recurrence):
+        await update.message.reply_text(f"Задача №{task_id} не найдена.")
+        return
+    if recurrence is None:
+        await update.message.reply_text(f"Повтор для №{task_id} отключён.")
+    else:
+        await update.message.reply_text(
+            f"Задача №{task_id} будет повторяться: {recurrence}."
+        )
+
+
 def main() -> None:  # pragma: no cover
     """Запускает бота (сетевой polling — вне unit-тестов)."""
     if not TELEGRAM_BOT_TOKEN:
@@ -367,6 +413,7 @@ def main() -> None:  # pragma: no cover
     application.add_handler(CommandHandler("renamelist", renamelist_command))
     application.add_handler(CommandHandler("dellist", dellist_command))
     application.add_handler(CommandHandler("movetask", movetask_command))
+    application.add_handler(CommandHandler("repeat", repeat_command))
 
     # Планировщик напоминаний (APScheduler)
     setup_scheduler(application)
