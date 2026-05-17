@@ -28,15 +28,26 @@ def init_db():
             due_date TEXT,
             completed BOOLEAN DEFAULT FALSE,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            reminder_sent INTEGER NOT NULL DEFAULT 0
+            reminder_sent INTEGER NOT NULL DEFAULT 0,
+            list_id INTEGER
         )
     ''')
-    # Миграция для БД, созданных до Фазы 4 (колонки могло не быть).
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS lists (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    # Миграции для БД, созданных до Фаз 4/5.2 (колонок могло не быть).
     columns = {row[1] for row in cursor.execute("PRAGMA table_info(tasks)")}
     if "reminder_sent" not in columns:
         cursor.execute(
             "ALTER TABLE tasks ADD COLUMN reminder_sent INTEGER NOT NULL DEFAULT 0"
         )
+    if "list_id" not in columns:
+        cursor.execute("ALTER TABLE tasks ADD COLUMN list_id INTEGER")
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована.")
@@ -216,3 +227,116 @@ def mark_task_undone(task_id: int) -> bool:
         return True
     logger.warning("mark_task_undone: task=%s not found", task_id)
     return False
+
+
+# --- Списки/категории (Фаза 5.2) ---
+
+def create_list(user_id: int, name: str) -> int:
+    """Создаёт список и возвращает его id."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO lists (user_id, name) VALUES (?, ?)", (user_id, name)
+    )
+    list_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    logger.info("user=%s created list=%s '%s'", user_id, list_id, name)
+    return list_id
+
+
+def get_lists(user_id: int) -> list[dict]:
+    """Списки пользователя (по времени создания)."""
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM lists WHERE user_id = ? ORDER BY created_at, id",
+        (user_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def rename_list(list_id: int, name: str) -> bool:
+    """Переименовывает список. False, если списка нет."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE lists SET name = ? WHERE id = ?", (name, list_id))
+    rows_affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows_affected > 0:
+        logger.info("list=%s renamed to '%s'", list_id, name)
+        return True
+    logger.warning("rename_list: list=%s not found", list_id)
+    return False
+
+
+def delete_list(list_id: int) -> bool:
+    """Удаляет список; его задачи переносятся в «без списка» (list_id=NULL)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE tasks SET list_id = NULL WHERE list_id = ?", (list_id,)
+    )
+    cursor.execute("DELETE FROM lists WHERE id = ?", (list_id,))
+    rows_affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows_affected > 0:
+        logger.info("list=%s deleted", list_id)
+        return True
+    logger.warning("delete_list: list=%s not found", list_id)
+    return False
+
+
+def assign_task_to_list(task_id: int, list_id: int | None) -> bool:
+    """Привязывает задачу к списку (None = без списка). False, если задачи нет."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE tasks SET list_id = ? WHERE id = ?", (list_id, task_id)
+    )
+    rows_affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows_affected > 0:
+        logger.info("task=%s assigned to list=%s", task_id, list_id)
+        return True
+    logger.warning("assign_task_to_list: task=%s not found", task_id)
+    return False
+
+
+def get_tasks_by_list(
+    user_id: int, list_id: int | None, completed: bool = False
+) -> list[dict]:
+    """Активные/выполненные задачи пользователя в конкретном списке.
+
+    `list_id=None` — задачи без списка.
+    """
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    flag = 1 if completed else 0
+    if list_id is None:
+        cursor.execute(
+            "SELECT * FROM tasks WHERE user_id = ? AND completed = ? "
+            "AND list_id IS NULL ORDER BY created_at",
+            (user_id, flag),
+        )
+    else:
+        cursor.execute(
+            "SELECT * FROM tasks WHERE user_id = ? AND completed = ? "
+            "AND list_id = ? ORDER BY created_at",
+            (user_id, flag, list_id),
+        )
+    rows = cursor.fetchall()
+    conn.close()
+    result = []
+    for row in rows:
+        task = dict(row)
+        task["completed"] = bool(task["completed"])
+        result.append(task)
+    return result
