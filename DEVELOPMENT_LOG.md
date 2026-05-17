@@ -53,11 +53,19 @@ git-workflow (ветка на этап → merge в `main` при зелёных
 GitHub Actions. Созданы `.gitignore`, `.env.example`, `requirements.txt`,
 `requirements-dev.txt`.
 
-**Статус:** В работе (Фаза 0) ⚙️
+**Статус:** Фаза 0 завершена ✅
 
-**Следующие шаги:**
-1.  Установка `gh` CLI (winget) — в процессе.
-2.  Пользователь: `gh auth login` (интерактивно, браузер).
-3.  Создать private-репозиторий `bot_reminder`, запушить `main`.
-4.  Фаза 1: окружение + CI. Фаза 2: реализовать `config.py` и `database.py`
-    строго под существующие тесты, с исправленной фикстурой БД.
+**Результат Фазы 0:**
+- `gh` CLI 2.92.0 установлен; пользователь авторизован (`James7underland`).
+- Создан **private**-репозиторий
+  `https://github.com/James7underland/bot_reminder`, default branch `main`.
+- Первый коммит `8c869e4` (каркас + план + устранение секрета) запушен.
+- Токен в git-историю не попал (проверено `git grep` по HEAD).
+
+**Следующие шаги (Фаза 1 — ветка `phase/1-env-ci`):**
+1.  Установить зависимости в `.venv` из `requirements-dev.txt`.
+2.  `pyproject.toml`: конфиг pytest / coverage / ruff.
+3.  `.github/workflows/ci.yml`: джобы setup/lint/test, кэш зависимостей.
+4.  Branch protection на `main` (требование зелёного CI).
+5.  Затем Фаза 2: `config.py`/`database.py` строго под тесты, с
+    исправленной фикстурой БД.
