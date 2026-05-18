@@ -47,8 +47,17 @@ async def check_and_send_reminders(bot, now: datetime | None = None) -> int:
     return sent
 
 
-def setup_scheduler(application) -> AsyncIOScheduler:  # pragma: no cover
-    """Создаёт и запускает планировщик, привязанный к боту приложения."""
+def setup_scheduler(application) -> AsyncIOScheduler:
+    """
+    Создаёт планировщик и привязывает его старт/остановку к жизненному
+    циклу приложения.
+
+    ВАЖНО: `AsyncIOScheduler.start()` требует уже работающего event loop.
+    Если вызвать его прямо в `main()` (до `run_polling`), будет
+    `RuntimeError: no running event loop`. Поэтому старт переносится в
+    `post_init` (PTB вызывает его внутри запущенного loop), а остановка —
+    в `post_shutdown` (graceful).
+    """
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
         check_and_send_reminders,
@@ -58,6 +67,18 @@ def setup_scheduler(application) -> AsyncIOScheduler:  # pragma: no cover
         id="reminders",
         replace_existing=True,
     )
-    scheduler.start()
-    logger.info("Планировщик запущен (интервал %s c).", SCHEDULER_CHECK_INTERVAL)
+
+    async def _start(_app) -> None:
+        scheduler.start()
+        logger.info(
+            "Планировщик запущен (интервал %s c).", SCHEDULER_CHECK_INTERVAL
+        )
+
+    async def _stop(_app) -> None:
+        if scheduler.running:
+            scheduler.shutdown(wait=False)
+            logger.info("Планировщик остановлен.")
+
+    application.post_init = _start
+    application.post_shutdown = _stop
     return scheduler
