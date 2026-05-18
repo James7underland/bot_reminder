@@ -464,3 +464,30 @@ TOTAL 99.78%; ruff чист.
 **Осталось (Фаза 6b, требует пользователя):**
 1.  VPS + GitHub Secrets + `.env` с новым токеном → CD по runbook.
 2.  PostgreSQL — отдельной фазой по реальной потребности.
+
+---
+
+## Этап 16: Прод-баг — scheduler.start() без event loop (Фаза 6b)
+
+**Дата:** 2026-05-19
+
+**Описание:** При первом запуске на VPS (systemd) бот падал с
+`RuntimeError: no running event loop` в `AsyncIOScheduler.start()`.
+Причина: `setup_scheduler()` вызывал `scheduler.start()` синхронно в
+`main()` — **до** старта event loop в `run_polling()`. Юнит-тесты не
+ловили: `setup_scheduler` был помечен `# pragma: no cover` как
+«интеграция» — классический случай, когда непокрытый код прячет баг.
+
+**Исправление:** `scheduler.start()` перенесён в `application.post_init`
+(PTB вызывает его внутри уже запущенного loop), остановка — в
+`application.post_shutdown` (`scheduler.shutdown(wait=False)` при
+`running`, graceful). `# pragma: no cover` снят; `setup_scheduler`
+покрыт тестами (старт НЕ синхронный — регрессия на сам баг; старт/стоп
+через post_init/post_shutdown).
+
+**Результат:** 174 теста зелёные (+2); `scheduler.py` 100% (был с
+pragma), TOTAL 99.79%; ruff чист.
+
+**Статус:** PR #13 → merge после CI. Затем пользователь на сервере:
+`git pull && pip install -r requirements.txt && systemctl restart
+bot_reminder` (в дальнейшем — автоматически через CD).

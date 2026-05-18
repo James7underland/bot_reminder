@@ -1,9 +1,10 @@
 """Тесты планировщика напоминаний (БД реальная temp, Telegram замокан)."""
 import sqlite3
 from datetime import datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import database
+import scheduler
 from database import add_task, get_due_tasks, mark_reminder_sent, mark_task_done
 from scheduler import check_and_send_reminders
 
@@ -95,3 +96,33 @@ def test_init_db_migrates_legacy_table(tmp_path):
     cols = {row[1] for row in check.execute("PRAGMA table_info(tasks)")}
     check.close()
     assert "reminder_sent" in cols
+
+
+# --- setup_scheduler: регрессия бага «no running event loop» ---
+
+async def test_setup_scheduler_defers_start_to_post_init():
+    fake = MagicMock()
+    fake.running = True
+    app = MagicMock()
+    app.bot = object()
+    with patch.object(scheduler, "AsyncIOScheduler", return_value=fake):
+        result = scheduler.setup_scheduler(app)
+    assert result is fake
+    fake.add_job.assert_called_once()
+    # НЕ стартует синхронно — это и был прод-баг "no running event loop"
+    fake.start.assert_not_called()
+    # старт/стоп навешаны на жизненный цикл приложения
+    await app.post_init(app)
+    fake.start.assert_called_once()
+    await app.post_shutdown(app)
+    fake.shutdown.assert_called_once()
+
+
+async def test_setup_scheduler_stop_skips_when_not_running():
+    fake = MagicMock()
+    fake.running = False
+    app = MagicMock()
+    with patch.object(scheduler, "AsyncIOScheduler", return_value=fake):
+        scheduler.setup_scheduler(app)
+    await app.post_shutdown(app)
+    fake.shutdown.assert_not_called()
