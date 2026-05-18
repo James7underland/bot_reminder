@@ -43,9 +43,18 @@ crontab -e
 |---|---|
 | `DEPLOY_HOST` | IP/домен VPS |
 | `DEPLOY_USER` | пользователь SSH |
-| `DEPLOY_SSH_KEY` | приватный ключ деплой-пары (публичный — в `~/.ssh/authorized_keys` на VPS) |
+| `DEPLOY_SSH_KEY` | приватный ключ деплой-пары в **base64, одной строкой** (см. ниже) |
 
-Для `systemctl restart` без пароля разрешите в sudoers:
+Значение `DEPLOY_SSH_KEY` получить на сервере (без переносов строк —
+так ключ не ломается при передаче через секрет):
+```
+base64 -w0 ~/.ssh/cd_key
+```
+Скопировать всю строку → вставить в секрет. Публичный ключ
+(`~/.ssh/cd_key.pub`) — в `~/.ssh/authorized_keys` на VPS.
+
+Если деплой идёт под non-root, для `systemctl restart` без пароля
+разрешите в sudoers (под root не требуется):
 ```
 <user> ALL=(root) NOPASSWD: /bin/systemctl restart bot_reminder
 ```
