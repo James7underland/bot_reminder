@@ -47,6 +47,19 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
+
+# Сторонние логгеры на INFO светят секреты: httpx печатает URL Telegram
+# API с токеном бота. Приглушаем их до WARNING (токен не попадает в логи).
+_NOISY_LOGGERS = ("httpx", "httpcore", "apscheduler", "telegram")
+
+
+def quiet_third_party_loggers() -> None:
+    """Поднимает уровень шумных сторонних логгеров до WARNING."""
+    for name in _NOISY_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
+quiet_third_party_loggers()
 logger = logging.getLogger(__name__)
 
 # Поддерживаются ТОЛЬКО явные форматы даты-времени (решение №4 — без
