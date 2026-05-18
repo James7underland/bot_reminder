@@ -41,5 +41,6 @@ jobs:
             cd ~/bot_reminder
             git pull --ff-only
             ./.venv/bin/pip install -q -r requirements.txt
-            sudo systemctl restart bot_reminder
+            sudo -n systemctl restart bot_reminder 2>/dev/null \
+              || systemctl restart bot_reminder
           '
