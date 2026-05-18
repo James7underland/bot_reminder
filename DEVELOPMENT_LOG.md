@@ -510,3 +510,18 @@ BotFather.) Добавлена `quiet_third_party_loggers()` — поднима�
 
 **Статус:** PR #14 → merge после CI; затем на сервере `git pull` +
 restart (или авто-деплой, когда настроен).
+
+---
+
+## Этап 18: Фикс deploy.yml под root (до настройки CD)
+
+**Дата:** 2026-05-19
+
+**Описание:** Сервер развёрнут под `root`. В `deploy.yml` рестарт был
+`sudo systemctl restart` — на минимальном root-образе `sudo` может
+отсутствовать, первый авто-деплой упал бы. Заменено на
+`sudo -n systemctl ... 2>/dev/null || systemctl ...` — работает и под
+root (plain), и под non-root с NOPASSWD-sudo. Поймано до настройки
+секретов (trust-but-verify собственного workflow).
+
+**Статус:** PR #15 → merge после CI. CD безопасно no-op до секретов.
