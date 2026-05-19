@@ -43,7 +43,8 @@ def init_db():
             remind_before INTEGER,
             deadline TEXT,
             reminder_at TEXT,
-            overdue_notified INTEGER NOT NULL DEFAULT 0
+            overdue_notified INTEGER NOT NULL DEFAULT 0,
+            order_index INTEGER
         )
     ''')
     cursor.execute('''
@@ -105,6 +106,14 @@ def init_db():
             "ALTER TABLE tasks ADD COLUMN overdue_notified "
             "INTEGER NOT NULL DEFAULT 0"
         )
+    # Фаза 9.4: ручной порядок задач. Бэкфилл по `id` сохраняет исходный
+    # порядок (id монотонный, как и created_at). Новые задачи получают
+    # max(order_index)+1 в add_task.
+    if "order_index" not in columns:
+        cursor.execute("ALTER TABLE tasks ADD COLUMN order_index INTEGER")
+        cursor.execute(
+            "UPDATE tasks SET order_index = id WHERE order_index IS NULL"
+        )
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована.")
@@ -126,10 +135,14 @@ def add_task(user_id: int, description: str, due_date: str | None = None) -> int
     """
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute('''
-        INSERT INTO tasks (user_id, description, due_date)
-        VALUES (?, ?, ?)
-    ''', (user_id, description, due_date))
+    # Фаза 9.4: order_index = max(order_index of same user) + 1, чтобы новая
+    # задача шла последней в ручной сортировке (как в Microsoft To Do).
+    cursor.execute(
+        "INSERT INTO tasks (user_id, description, due_date, order_index) "
+        "VALUES (?, ?, ?, "
+        "COALESCE((SELECT MAX(order_index) FROM tasks WHERE user_id = ?), 0) + 1)",
+        (user_id, description, due_date, user_id),
+    )
     task_id = cursor.lastrowid
     conn.commit()
     conn.close()
@@ -137,11 +150,14 @@ def add_task(user_id: int, description: str, due_date: str | None = None) -> int
     return task_id
 
 # Белый список сортировок (никакой пользовательский ввод не идёт в SQL).
+# С Фазы 9.4 дефолт — ручной порядок (`order_index`, потом `created_at` как
+# тайбрейкер для старых бэкфилл-нулей и одинаковых индексов).
 _SORT_ORDERS = {
-    "important": "important DESC, created_at",
-    "due": "due_date IS NULL, due_date, created_at",
+    "important": "important DESC, order_index, created_at",
+    "due": "due_date IS NULL, due_date, order_index, created_at",
     "alpha": "description COLLATE NOCASE",
     "created": "created_at",
+    "manual": "order_index, created_at",
 }
 
 
@@ -165,7 +181,10 @@ def get_tasks(
     cursor = conn.cursor()
 
     flag = 1 if completed else 0
-    order = _SORT_ORDERS.get(sort, "created_at")
+    # Дефолт (None) — ручной порядок (Фаза 9.4), чтобы Mini App и /tasks
+    # отражали drag/стрелки. Старая семантика «по created_at» доступна как
+    # sort="created".
+    order = _SORT_ORDERS.get(sort, "order_index, created_at")
     cursor.execute(
         f"SELECT * FROM tasks WHERE user_id = ? AND completed = ? ORDER BY {order}",
         (user_id, flag),
@@ -398,13 +417,13 @@ def get_tasks_by_list(
     if list_id is None:
         cursor.execute(
             "SELECT * FROM tasks WHERE user_id = ? AND completed = ? "
-            "AND list_id IS NULL ORDER BY created_at",
+            "AND list_id IS NULL ORDER BY order_index, created_at",
             (user_id, flag),
         )
     else:
         cursor.execute(
             "SELECT * FROM tasks WHERE user_id = ? AND completed = ? "
-            "AND list_id = ? ORDER BY created_at",
+            "AND list_id = ? ORDER BY order_index, created_at",
             (user_id, flag, list_id),
         )
     rows = cursor.fetchall()
@@ -997,3 +1016,80 @@ def mark_overdue_notified(task_id: int) -> bool:
         return True
     logger.warning("mark_overdue_notified: task=%s not found", task_id)
     return False
+
+
+# --- Ручной порядок задач (Фаза 9.4) ---
+
+def _move_task(task_id: int, direction: int) -> bool:
+    """
+    direction = -1 (вверх) или +1 (вниз). Меняется местами с ближайшим
+    активным «соседом» того же пользователя в том же списке (включая
+    «без списка», когда list_id IS NULL). False, если задачи нет, она
+    выполнена, или соседа в этом направлении не существует (крайняя).
+    Per-user `order_index` уникален (см. `add_task`), поэтому простого
+    свопа двух значений достаточно — без сдвига промежутка.
+    """
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, user_id, list_id, order_index, completed "
+        "FROM tasks WHERE id = ?",
+        (task_id,),
+    )
+    row = cursor.fetchone()
+    if row is None or row["completed"]:
+        conn.close()
+        logger.warning("_move_task: task=%s missing or completed", task_id)
+        return False
+    user_id, list_id, idx = row["user_id"], row["list_id"], row["order_index"]
+    # Сосед — активная задача того же пользователя в том же списке (или
+    # тоже «без списка»), с минимально большим/меньшим order_index.
+    if list_id is None:
+        list_clause = "AND list_id IS NULL"
+        params: tuple = (user_id, idx)
+    else:
+        list_clause = "AND list_id = ?"
+        params = (user_id, idx, list_id)
+    if direction < 0:
+        cursor.execute(
+            f"SELECT id, order_index FROM tasks WHERE user_id = ? "
+            f"AND completed = 0 AND order_index < ? {list_clause} "
+            "ORDER BY order_index DESC, id DESC LIMIT 1",
+            params,
+        )
+    else:
+        cursor.execute(
+            f"SELECT id, order_index FROM tasks WHERE user_id = ? "
+            f"AND completed = 0 AND order_index > ? {list_clause} "
+            "ORDER BY order_index, id LIMIT 1",
+            params,
+        )
+    neigh = cursor.fetchone()
+    if neigh is None:
+        conn.close()
+        return False
+    cursor.execute(
+        "UPDATE tasks SET order_index = ? WHERE id = ?",
+        (neigh["order_index"], task_id),
+    )
+    cursor.execute(
+        "UPDATE tasks SET order_index = ? WHERE id = ?", (idx, neigh["id"])
+    )
+    conn.commit()
+    conn.close()
+    logger.info(
+        "task=%s moved %s (swap with %s)",
+        task_id, "up" if direction < 0 else "down", neigh["id"],
+    )
+    return True
+
+
+def move_task_up(task_id: int) -> bool:
+    """Меняет местами задачу с предыдущим активным соседом того же списка."""
+    return _move_task(task_id, -1)
+
+
+def move_task_down(task_id: int) -> bool:
+    """Меняет местами задачу со следующим активным соседом того же списка."""
+    return _move_task(task_id, 1)

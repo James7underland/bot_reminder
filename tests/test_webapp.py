@@ -611,3 +611,139 @@ def test_api_snooze(client):
     assert client.post(
         f"/api/tasks/{tid}/snooze", json={"minutes": 5}, headers=hdr(99)
     ).status_code == 404
+
+
+# --- Фаза 9.4: ручной порядок ---
+
+def test_db_add_task_sets_order_index_max_plus_one():
+    """Каждая новая задача получает order_index = max(прошлых)+1 для user."""
+    from database import add_task, get_task
+    a = add_task(1, "a")
+    b = add_task(1, "b")
+    c = add_task(1, "c")
+    assert get_task(a)["order_index"] < get_task(b)["order_index"]
+    assert get_task(b)["order_index"] < get_task(c)["order_index"]
+    # У другого пользователя — независимая последовательность.
+    x = add_task(2, "x")
+    assert get_task(x)["order_index"] == 1
+
+
+def test_db_get_tasks_default_orders_by_manual():
+    """get_tasks(sort=None) сортирует по order_index, не по id/created."""
+    from database import add_task, get_tasks, move_task_up
+    a = add_task(7, "a")
+    b = add_task(7, "b")
+    c = add_task(7, "c")
+    # начало: a, b, c
+    ids = [t["id"] for t in get_tasks(7)]
+    assert ids == [a, b, c]
+    # двигаем c вверх дважды → c, a, b
+    move_task_up(c)
+    move_task_up(c)
+    ids2 = [t["id"] for t in get_tasks(7)]
+    assert ids2 == [c, a, b]
+
+
+def test_db_move_task_up_down_swap():
+    from database import (
+        add_task,
+        get_tasks,
+        move_task_down,
+        move_task_up,
+    )
+    a = add_task(3, "a")
+    b = add_task(3, "b")
+    c = add_task(3, "c")
+    assert [t["id"] for t in get_tasks(3)] == [a, b, c]
+    assert move_task_down(a) is True   # b, a, c
+    assert [t["id"] for t in get_tasks(3)] == [b, a, c]
+    assert move_task_up(c) is True     # b, c, a
+    assert [t["id"] for t in get_tasks(3)] == [b, c, a]
+    # крайние — двигать нечего
+    assert move_task_up(b) is False
+    assert move_task_down(a) is False
+
+
+def test_db_move_task_only_swaps_same_user_and_list():
+    """Сосед — тот же user, тот же list_id (включая NULL=NULL)."""
+    from database import (
+        add_task,
+        assign_task_to_list,
+        create_list,
+        get_tasks,
+        get_tasks_by_list,
+        move_task_down,
+        move_task_up,
+    )
+    lid = create_list(4, "L")
+    a = add_task(4, "a")           # без списка
+    b = add_task(4, "b")           # без списка
+    c = add_task(4, "c")
+    d = add_task(4, "d")
+    assign_task_to_list(c, lid)    # в списке L
+    assign_task_to_list(d, lid)    # в том же списке
+    foreign = add_task(99, "f")    # чужой пользователь, выше по индексу
+    # move_down(a): сосед — b (без списка), НЕ c (другой список) и НЕ foreign.
+    assert move_task_down(a) is True
+    assert [t["id"] for t in get_tasks_by_list(4, None)] == [b, a]
+    # внутри списка L: c, d → move_up(d) → d, c
+    assert move_task_up(d) is True
+    assert [t["id"] for t in get_tasks_by_list(4, lid)] == [d, c]
+    # foreign не сдвинулся
+    assert [t["id"] for t in get_tasks(99)] == [foreign]
+
+
+def test_db_move_task_skips_completed_neighbor():
+    """Выполненные задачи — не соседи (они скрыты в активном списке)."""
+    from database import add_task, complete_task, get_tasks, move_task_down
+    a = add_task(5, "a")
+    b = add_task(5, "b")
+    c = add_task(5, "c")
+    complete_task(b)                # b теперь выполнен → пропускаем
+    assert [t["id"] for t in get_tasks(5)] == [a, c]
+    assert move_task_down(a) is True
+    assert [t["id"] for t in get_tasks(5)] == [c, a]
+
+
+def test_db_move_task_invalid_returns_false():
+    from database import add_task, complete_task, move_task_down, move_task_up
+    a = add_task(6, "a")
+    complete_task(a)
+    assert move_task_up(a) is False     # сама выполнена
+    assert move_task_down(a) is False
+    assert move_task_up(999999) is False  # нет такой
+    assert move_task_down(999999) is False
+
+
+def test_api_move_up_down(client):
+    a = client.post(
+        "/api/tasks", json={"description": "a"}, headers=hdr()
+    ).json()["id"]
+    b = client.post(
+        "/api/tasks", json={"description": "b"}, headers=hdr()
+    ).json()["id"]
+    # b — последняя, поднимем её
+    r = client.post(f"/api/tasks/{b}/move-up", headers=hdr())
+    assert r.status_code == 200 and r.json()["moved"] is True
+    ids = [t["id"] for t in client.get("/api/tasks", headers=hdr()).json()]
+    assert ids == [b, a]
+    # b уже первая — move-up = False
+    r2 = client.post(f"/api/tasks/{b}/move-up", headers=hdr())
+    assert r2.status_code == 200 and r2.json()["moved"] is False
+    # и снова вниз
+    r3 = client.post(f"/api/tasks/{b}/move-down", headers=hdr())
+    assert r3.status_code == 200 and r3.json()["moved"] is True
+    ids2 = [t["id"] for t in client.get("/api/tasks", headers=hdr()).json()]
+    assert ids2 == [a, b]
+
+
+def test_api_move_others_task_404(client):
+    tid = client.post(
+        "/api/tasks", json={"description": "x"}, headers=hdr()
+    ).json()["id"]
+    assert client.post(
+        f"/api/tasks/{tid}/move-up", headers=hdr(99)
+    ).status_code == 404
+    assert client.post(
+        f"/api/tasks/{tid}/move-down", headers=hdr(99)
+    ).status_code == 404

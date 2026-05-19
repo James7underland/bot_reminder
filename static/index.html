@@ -37,6 +37,8 @@
   .overdue .meta,.overdue .ttl{color:#e53935}
   .star{font-size:20px;color:var(--hint);flex:none;background:none;padding:0 2px}
   .star.on{color:#f5b301}
+  .mv{flex:none;background:none;color:var(--hint);font-size:12px;
+      padding:0 4px;line-height:1}
   .panel{margin-top:10px;display:none;flex-direction:column;gap:8px}
   .panel.open{display:flex}
   .panel label{font-size:12px;color:var(--hint)}
@@ -174,6 +176,8 @@ function row(t){
       <div class="chk ${t.completed?'done':''}" data-act="toggle"></div>
       <div class="ttl">${esc(t.description)}
         <div class="meta"></div></div>
+      <button class="ghost mv" data-act="mv-up" title="Выше">▲</button>
+      <button class="ghost mv" data-act="mv-down" title="Ниже">▼</button>
       <button class="star ${t.important?'on':''}" data-act="star">★</button>
     </div>
     <div class="panel">
@@ -375,6 +379,12 @@ function row(t){
     } else if (act === "clr-rm") {
       await api(`/tasks/${t.id}`, {method:"PATCH",
         body: JSON.stringify({clear_reminder:true})}); load();
+    } else if (act === "mv-up") {
+      await api(`/tasks/${t.id}/move-up`, {method:"POST"});
+      load();
+    } else if (act === "mv-down") {
+      await api(`/tasks/${t.id}/move-down`, {method:"POST"});
+      load();
     }
   });
   return li;
