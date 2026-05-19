@@ -51,6 +51,12 @@
   .sdone{text-decoration:line-through;color:var(--hint)}
   .sdel{margin-left:auto;color:var(--hint)}
   .addstep{display:flex;gap:8px}
+  .f-cust{display:flex;flex-direction:column;gap:6px;font-size:13px}
+  .f-cust .ckrow{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+  .f-cust .f-rcn{width:60px;padding:4px}
+  .f-cust .f-rcu{width:auto;padding:4px}
+  .f-cust .wd{display:flex;flex-wrap:wrap;gap:6px}
+  .f-cust .wd label{font-size:12px}
   .pbtns{display:flex;gap:8px;flex-wrap:wrap}
   .muted{color:var(--hint);text-align:center;padding:30px 16px}
 </style>
@@ -173,8 +179,35 @@ function row(t){
           <option value="weekly">еженедельно</option>
           <option value="monthly">ежемесячно</option>
           <option value="yearly">ежегодно</option>
+          <option value="custom">свой шаблон…</option>
         </select>
       </label>
+      <div class="f-cust" hidden>
+        <div class="ckrow">
+          <label><input type="radio" name="rcm_${t.id}" class="f-rcm"
+                 value="every" checked> Каждые</label>
+          <input type="number" min="1" value="1" class="f-rcn">
+          <select class="f-rcu">
+            <option value="d">день</option>
+            <option value="w">неделя</option>
+            <option value="m">месяц</option>
+            <option value="y">год</option>
+          </select>
+        </div>
+        <div class="ckrow">
+          <label><input type="radio" name="rcm_${t.id}" class="f-rcm"
+                 value="weekdays"> По дням недели</label>
+          <span class="wd">
+            <label><input type="checkbox" class="f-wd" value="MO">Пн</label>
+            <label><input type="checkbox" class="f-wd" value="TU">Вт</label>
+            <label><input type="checkbox" class="f-wd" value="WE">Ср</label>
+            <label><input type="checkbox" class="f-wd" value="TH">Чт</label>
+            <label><input type="checkbox" class="f-wd" value="FR">Пт</label>
+            <label><input type="checkbox" class="f-wd" value="SA">Сб</label>
+            <label><input type="checkbox" class="f-wd" value="SU">Вс</label>
+          </span>
+        </div>
+      </div>
       <label>Список
         <select class="f-list">
           <option value="0">Без списка</option>
@@ -205,7 +238,28 @@ function row(t){
   $(".meta", li).textContent = meta.join(" · ");
   $(".f-dl", li).value = toInput(t.deadline);
   $(".f-rm", li).value = toInput(t.reminder_at);
-  $(".f-rec", li).value = t.recurrence || "";
+  // Повтор: пресет или custom (every:N:U / weekdays:...)
+  const recSel = $(".f-rec", li);
+  const cust = $(".f-cust", li);
+  const presets = ["daily","weekly","monthly","yearly"];
+  const r = t.recurrence || "";
+  let mEvery = r.match(/^every:(\d+):([dwmy])$/);
+  let mWeek = r.match(/^weekdays:([A-Z,]+)$/);
+  if (!r) { recSel.value = ""; }
+  else if (presets.includes(r)) { recSel.value = r; }
+  else {
+    recSel.value = "custom"; cust.hidden = false;
+    if (mEvery) {
+      li.querySelector(".f-rcm[value=every]").checked = true;
+      $(".f-rcn", li).value = mEvery[1];
+      $(".f-rcu", li).value = mEvery[2];
+    } else if (mWeek) {
+      li.querySelector(".f-rcm[value=weekdays]").checked = true;
+      const wd = new Set(mWeek[1].split(","));
+      li.querySelectorAll(".f-wd").forEach(c => c.checked = wd.has(c.value));
+    }
+  }
+  recSel.onchange = () => { cust.hidden = recSel.value !== "custom"; };
   $(".f-list", li).value = t.list_id ? String(t.list_id) : "0";
 
   async function refreshSteps(){
@@ -240,7 +294,20 @@ function row(t){
         body: JSON.stringify({important: !t.important})});
       load();
     } else if (act === "save") {
-      const rec = $(".f-rec",li).value;
+      let rec = $(".f-rec",li).value;
+      if (rec === "custom") {
+        const mode = li.querySelector(".f-rcm:checked")?.value;
+        if (mode === "weekdays") {
+          const days = [...li.querySelectorAll(".f-wd:checked")]
+            .map(c => c.value);
+          if (!days.length) { alert("Выберите хотя бы один день"); return; }
+          rec = "weekdays:" + days.join(",");
+        } else {
+          const n = parseInt($(".f-rcn",li).value, 10);
+          if (!(n >= 1)) { alert("N должно быть ≥ 1"); return; }
+          rec = "every:" + n + ":" + $(".f-rcu",li).value;
+        }
+      }
       const notes = $(".f-notes",li).value;
       await api(`/tasks/${t.id}`, {method:"PATCH", body: JSON.stringify({
         description: $(".f-desc",li).value,

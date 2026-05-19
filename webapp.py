@@ -20,7 +20,6 @@ from pydantic import BaseModel
 
 import config
 from database import (
-    RECURRENCES,
     add_step,
     add_task,
     add_to_myday,
@@ -37,6 +36,7 @@ from database import (
     get_tasks_by_list,
     get_timezone,
     init_db,
+    is_valid_recurrence,
     mark_step_done,
     mark_task_undone,
     remove_from_myday,
@@ -268,7 +268,7 @@ async def api_patch_task(
     if body.clear_recurrence:
         set_recurrence(task_id, None)
     elif body.recurrence is not None:
-        if body.recurrence not in RECURRENCES:
+        if not is_valid_recurrence(body.recurrence):
             raise HTTPException(status_code=422, detail="bad recurrence")
         set_recurrence(task_id, body.recurrence)
     if body.clear_notes:

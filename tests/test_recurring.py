@@ -4,7 +4,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import bot
-from database import add_task, complete_task, get_tasks, next_occurrence, set_recurrence
+from database import (
+    add_task,
+    complete_task,
+    get_tasks,
+    is_valid_recurrence,
+    next_occurrence,
+    set_recurrence,
+)
 
 
 def make_update(user_id=42):
@@ -170,3 +177,56 @@ async def test_done_recurring_message():
         await bot.done_task(u, make_context(["1"]))
     out = reply(u)
     assert "2026-05-18 09:00:00" in out and "повторение" in out.lower()
+
+
+# --- Фаза 9.1: custom recurrence ---
+
+@pytest.mark.parametrize(
+    "due, rec, expected",
+    [
+        ("2026-05-17 09:00:00", "every:2:d", "2026-05-19 09:00:00"),
+        ("2026-05-17 09:00:00", "every:3:w", "2026-06-07 09:00:00"),
+        ("2026-01-15 10:00:00", "every:2:m", "2026-03-15 10:00:00"),
+        ("2026-01-31 10:00:00", "every:1:m", "2026-02-28 10:00:00"),  # clamp
+        ("2024-02-29 09:00:00", "every:1:y", "2025-02-28 09:00:00"),  # leap
+        # weekdays: понедельник 2026-05-18 → следующий Wed(2026-05-20) или Fri
+        ("2026-05-18 09:00:00", "weekdays:WE,FR", "2026-05-20 09:00:00"),
+        # пятница 2026-05-22 → следующий из {MO} = понедельник 2026-05-25
+        ("2026-05-22 09:00:00", "weekdays:MO", "2026-05-25 09:00:00"),
+        # воскресенье 2026-05-24 → MO следующего дня
+        ("2026-05-24 09:00:00", "weekdays:MO,WE,FR", "2026-05-25 09:00:00"),
+    ],
+)
+def test_custom_recurrence_next(due, rec, expected):
+    assert next_occurrence(due, rec) == expected
+
+
+@pytest.mark.parametrize(
+    "rec",
+    ["every:0:d", "every:abc:d", "every:2:x", "weekdays:", "weekdays:XX",
+     "weekdays:MO,MO", "weekly:custom", "garbage"],
+)
+def test_is_valid_recurrence_rejects_garbage(rec):
+    assert is_valid_recurrence(rec) is False
+
+
+def test_is_valid_recurrence_accepts():
+    for v in (None, "daily", "weekly", "monthly", "yearly",
+              "every:1:d", "every:5:w", "weekdays:MO", "weekdays:MO,WE,FR"):
+        assert is_valid_recurrence(v) is True
+
+
+def test_set_recurrence_accepts_custom():
+    tid = add_task(1, "t")
+    assert set_recurrence(tid, "every:2:d") is True
+    assert get_tasks(1)[0]["recurrence"] == "every:2:d"
+    assert set_recurrence(tid, "weekdays:MO,WE,FR") is True
+    assert get_tasks(1)[0]["recurrence"] == "weekdays:MO,WE,FR"
+
+
+def test_complete_task_with_custom_recurrence_spawns_next():
+    tid = add_task(1, "standup", "2026-05-17 09:00:00")  # Sunday
+    set_recurrence(tid, "weekdays:MO,WE,FR")  # next = Monday
+    res = complete_task(tid)
+    assert res["next_due"] == "2026-05-18 09:00:00"
+    assert get_tasks(1)[0]["recurrence"] == "weekdays:MO,WE,FR"
