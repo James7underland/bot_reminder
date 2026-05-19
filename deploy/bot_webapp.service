@@ -1,0 +1,20 @@
+# systemd-юнит для HTTP-бэкенда Mini App (FastAPI/uvicorn).
+# Слушает только localhost; наружу отдаётся через Cloudflare Tunnel.
+# Установка (под root):
+#   cp deploy/bot_webapp.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now bot_webapp
+[Unit]
+Description=Reminder Mini App (FastAPI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/bot_reminder
+ExecStart=/root/bot_reminder/.venv/bin/uvicorn webapp:app --host 127.0.0.1 --port 8080
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
