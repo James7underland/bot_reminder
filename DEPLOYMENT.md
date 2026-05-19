@@ -71,3 +71,48 @@ PostgreSQL вынесена в отдельную фазу: SQL изолиров
 переключение делается там же + `psycopg` + строка подключения из `.env`.
 Делать, когда появится реальная потребность (несколько инстансов/высокая
 конкуренция).
+
+## 6. Telegram Mini App (Фаза 8.3) — на сервере
+
+Бэкенд Mini App (`webapp.py`) слушает только `127.0.0.1:8080`; наружу
+отдаётся через Cloudflare Tunnel (HTTPS). Токен берётся из того же
+`.env`.
+
+**6.1. Сервис webapp (uvicorn):**
+```bash
+cd ~/bot_reminder && git pull --ff-only
+./.venv/bin/pip install -r requirements.txt        # fastapi, uvicorn
+cp deploy/bot_webapp.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now bot_webapp
+curl -s localhost:8080/healthz                     # {"ok":true}
+```
+
+**6.2. Cloudflare Tunnel.** Установить cloudflared:
+```bash
+curl -L -o /usr/local/bin/cloudflared \
+  https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+chmod +x /usr/local/bin/cloudflared
+```
+- *Быстрый старт (URL меняется при перезапуске):*
+  `cloudflared tunnel --url http://127.0.0.1:8080` — выдаст
+  `https://<rand>.trycloudflare.com`.
+- *Стабильный URL (рекомендуется):* в дашборде Cloudflare Zero Trust
+  → Networks → Tunnels → Create tunnel → Cloudflared; привязать
+  public hostname к `http://127.0.0.1:8080`; скопировать **Tunnel
+  token**, затем:
+  ```bash
+  cp deploy/cloudflared.service /etc/systemd/system/
+  echo 'TUNNEL_TOKEN=<токен>' > /etc/cloudflared.env
+  chmod 600 /etc/cloudflared.env
+  sudo systemctl daemon-reload && sudo systemctl enable --now cloudflared
+  ```
+
+**6.3. Регистрация Mini App в @BotFather:**
+- `/newapp` (или `/mybots` → бот → Bot Settings → Menu Button /
+  Configure Mini App) → указать URL туннеля (HTTPS).
+- Готово: в боте появится кнопка, открывающая интерфейс.
+
+**Авто-деплой:** `deploy.yml` после `git pull` рестартит и
+`bot_reminder`, и `bot_webapp` (best-effort: пока юнит не создан —
+шаг не падает).

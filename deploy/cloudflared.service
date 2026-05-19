@@ -1,0 +1,21 @@
+# systemd-юнит для постоянного Cloudflare-туннеля (стабильный HTTPS-URL).
+# Требует созданного именованного туннеля и его токена (см. DEPLOYMENT.md §6).
+# Установка (под root):
+#   cp deploy/cloudflared.service /etc/systemd/system/
+#   echo 'TUNNEL_TOKEN=<токен_из_дашборда_Cloudflare>' > /etc/cloudflared.env
+#   chmod 600 /etc/cloudflared.env
+#   sudo systemctl daemon-reload && sudo systemctl enable --now cloudflared
+[Unit]
+Description=cloudflared tunnel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/cloudflared.env
+ExecStart=/usr/local/bin/cloudflared tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

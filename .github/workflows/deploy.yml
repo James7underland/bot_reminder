@@ -45,4 +45,6 @@ jobs:
             ./.venv/bin/pip install -q -r requirements.txt
             sudo -n systemctl restart bot_reminder 2>/dev/null \
               || systemctl restart bot_reminder
+            ( sudo -n systemctl restart bot_webapp 2>/dev/null \
+              || systemctl restart bot_webapp 2>/dev/null || true )
           '

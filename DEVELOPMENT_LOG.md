@@ -698,3 +698,29 @@ TOTAL 99.74%; ruff чист.
 **Статус:** PR #21 → merge → авто-деплой. Далее 8.3 — Cloudflare
 Tunnel + регистрация Mini App в @BotFather + запуск webapp на сервере
 (пошагово с пользователем).
+
+---
+
+## Этап 25: Фаза 8.3a — инфраструктура webapp (автономно)
+
+**Дата:** 2026-05-19
+
+**Описание:** Ветка `phase/8.3-webapp-deploy`. Автономная часть 8.3
+(без действий на сервере):
+- `deploy/bot_webapp.service` — systemd-юнит, `uvicorn webapp:app`
+  на `127.0.0.1:8080` (наружу — только через туннель), `Restart=always`.
+- `deploy/cloudflared.service` — шаблон постоянного именованного
+  туннеля (`TUNNEL_TOKEN` из `/etc/cloudflared.env`).
+- `deploy.yml`: после `git pull` дополнительно рестартит `bot_webapp`
+  (best-effort: `|| true` — пока юнит не создан, деплой не краснеет).
+- `DEPLOYMENT.md` §6 — пошаговый runbook: сервис webapp, установка
+  cloudflared (quick vs стабильный именованный), регистрация Mini App
+  в @BotFather.
+
+Python-код не менялся → 214 тестов зелёные, ruff чист.
+
+**Статус:** PR #22 → merge → авто-деплой (на сервере webapp ещё не
+запущен — это 8.3b с пользователем).
+
+**Осталось (8.3b, требует пользователя):** на VPS поднять `bot_webapp`
+и `cloudflared`, получить HTTPS-URL, привязать Mini App в @BotFather.
