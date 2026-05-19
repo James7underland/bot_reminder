@@ -546,3 +546,32 @@ OpenSSH-ключ, переданный через секрет и записан
 
 **Статус:** PR #16 → merge → его merge повторно запустит `Deploy` (уже с
 base64-декодом и обновлённым секретом). Бот-код не затронут.
+
+---
+
+## Этап 20: Фаза 7.1 — модель «срок» vs «напоминание»
+
+**Дата:** 2026-05-19
+
+**Контекст:** Запрошен крупный апгрейд — Telegram Mini App + разделение
+понятий «срок» (deadline, просрочка+красный) и «напоминание»
+(reminder_at). Решения: HTTPS = Cloudflare Tunnel; порядок = бэкенд
+раньше UI; срок = дата+время. Фаза 7 (бэкенд-редизайн) разбита на
+7.1/7.2/7.3; Mini App = Фаза 8.
+
+**7.1 (ветка `phase/7.1-deadline-reminder-model`):** добавлены колонки
+`deadline`, `reminder_at`, `overdue_notified` (`CREATE` + идемпотентная
+миграция; для legacy-строк `due_date` копируется в `reminder_at` —
+текущее поведение напоминаний сохранено, тест миграции). Функции:
+`set_deadline` (сбрасывает `overdue_notified`), `set_reminder_at`
+(сбрасывает `reminder_sent`), `get_due_reminders` (reminder_at<=now,
+active, не отправлено), `get_overdue_tasks` (deadline<now строго,
+active, не уведомляли), `mark_overdue_notified`. Старые
+`due_date`/`get_due_tasks`/`set_reminder` не тронуты (175 прежних
+тестов зелёные) — переключение планировщика в 7.2.
+
+**Результат:** 182 теста зелёные (+7 `tests/test_deadline_model.py`);
+`bot.py`/`database.py`/`scheduler.py`/`tzutil.py` 100%, `config.py` 80%,
+TOTAL 99.80%; ruff чист.
+
+**Статус:** PR #17 → merge → авто-деплой. Далее 7.2 (планировщик).
