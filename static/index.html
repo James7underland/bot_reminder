@@ -59,7 +59,10 @@
 <header>Мои задачи</header>
 <div class="bar">
   <select id="listSel"></select>
-  <button id="newList" class="ghost">+ список</button>
+  <button id="newList" class="ghost">+</button>
+  <button id="renList" class="ghost">✎</button>
+  <button id="delList" class="ghost">🗑</button>
+  <button id="tzBtn" class="ghost">⚙</button>
 </div>
 <div class="bar">
   <input id="newTask" placeholder="Новая задача…" autocomplete="off">
@@ -114,9 +117,11 @@ let listId = "all";
 function fmt(dt){ return dt ? dt.replace("T"," ").slice(0,16) : ""; }
 function toInput(s){ return s ? s.slice(0,16).replace(" ","T") : ""; }
 
+let LISTS = [];
 async function loadLists(){
   const sel = $("#listSel");
   const lists = await api("/lists");
+  LISTS = lists;
   sel.innerHTML =
     '<option value="all">Все задачи</option>' +
     '<option value="0">Без списка</option>' +
@@ -170,6 +175,13 @@ function row(t){
           <option value="yearly">ежегодно</option>
         </select>
       </label>
+      <label>Список
+        <select class="f-list">
+          <option value="0">Без списка</option>
+          ${LISTS.map(l => `<option value="${l.id}">${
+            esc(l.name)}</option>`).join("")}
+        </select>
+      </label>
       <label>Заметка<textarea class="f-notes">${esc(t.notes||"")}</textarea></label>
       <div class="steps" data-loaded="0"></div>
       <div class="addstep">
@@ -194,6 +206,7 @@ function row(t){
   $(".f-dl", li).value = toInput(t.deadline);
   $(".f-rm", li).value = toInput(t.reminder_at);
   $(".f-rec", li).value = t.recurrence || "";
+  $(".f-list", li).value = t.list_id ? String(t.list_id) : "0";
 
   async function refreshSteps(){
     const box = $(".steps", li);
@@ -236,6 +249,8 @@ function row(t){
         ...(rec ? {recurrence: rec} : {clear_recurrence: true}),
         ...(notes.trim() ? {notes: notes} : {clear_notes: true}),
       })});
+      await api(`/tasks/${t.id}/list`, {method:"POST", body: JSON.stringify(
+        {list_id: Number($(".f-list",li).value) || null})});
       load();
     } else if (act === "addstep") {
       const inp = $(".f-step", li);
@@ -298,6 +313,41 @@ $("#newList").onclick = async () => {
     await api("/lists", {method:"POST",
       body: JSON.stringify({name:name.trim()})});
     await loadLists(); load();
+  }
+};
+function curListId(){
+  return /^\d+$/.test(listId) ? listId : null;
+}
+$("#renList").onclick = async () => {
+  const id = curListId();
+  if (!id) { alert("Сначала выберите список в выпадающем меню"); return; }
+  const name = prompt("Новое название списка");
+  if (name && name.trim()) {
+    await api(`/lists/${id}`, {method:"PATCH",
+      body: JSON.stringify({name:name.trim()})});
+    await loadLists(); load();
+  }
+};
+$("#delList").onclick = async () => {
+  const id = curListId();
+  if (!id) { alert("Сначала выберите список в выпадающем меню"); return; }
+  if (confirm("Удалить список? Задачи останутся без списка.")) {
+    await api(`/lists/${id}`, {method:"DELETE"});
+    listId = "all";
+    await loadLists(); load();
+  }
+};
+$("#tzBtn").onclick = async () => {
+  const cur = (await api("/settings")).timezone;
+  const tz = prompt("Часовой пояс (IANA, напр. Europe/Moscow)", cur);
+  if (tz && tz.trim() && tz.trim() !== cur) {
+    const r = await fetch("/api/settings", {
+      method:"PUT",
+      headers:{"Content-Type":"application/json","X-Init-Data":INIT},
+      body: JSON.stringify({timezone: tz.trim()}),
+    });
+    if (r.status === 422) alert("Неверный часовой пояс");
+    else { alert("Часовой пояс сохранён"); load(); }
   }
 };
 
