@@ -724,3 +724,30 @@ Python-код не менялся → 214 тестов зелёные, ruff чи
 
 **Осталось (8.3b, требует пользователя):** на VPS поднять `bot_webapp`
 и `cloudflared`, получить HTTPS-URL, привязать Mini App в @BotFather.
+
+---
+
+## Этап 26: Фаза 8.3c — Caddy вместо Cloudflare-туннеля
+
+**Дата:** 2026-05-19
+
+**Описание:** Ветка `phase/8.3c-caddy`. Уточнено: у пользователя есть
+поддомен `ernstgku.beget.tech` и Beget позволяет ставить A-запись на
+IP VPS. Cloudflare named tunnel с этим поддоменом невозможен (зона
+`beget.tech` не в аккаунте пользователя). Решение — **Caddy прямо на
+VPS**: стабильный `https://ernstgku.beget.tech`, авто-сертификат
+Let's Encrypt (HTTP-01), reverse_proxy → `127.0.0.1:8080` (uvicorn
+webapp). Проще и стабильнее туннеля, без сторонней зависимости.
+
+Добавлены: `deploy/Caddyfile` (домен + reverse_proxy), `DEPLOYMENT.md`
+§6.2 переписан под Caddy (установка из офиц. репозитория, копия
+Caddyfile, порты 80/443, первая выдача сертификата); cloudflared
+оставлен как альтернатива. Python не менялся → 214 тестов зелёные,
+ruff чист.
+
+**Статус:** PR #23 → merge → авто-деплой (Caddyfile появится в
+`~/bot_reminder/deploy/` на сервере).
+
+**Осталось (8.3b, пользователь):** A-запись `ernstgku.beget.tech`→IP,
+открыть 80/443, поднять `bot_webapp`, установить Caddy + скопировать
+Caddyfile, зарегистрировать Mini App в @BotFather.
