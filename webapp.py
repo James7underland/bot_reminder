@@ -20,21 +20,26 @@ from pydantic import BaseModel
 import config
 from database import (
     RECURRENCES,
+    add_step,
     add_task,
     add_to_myday,
     complete_task,
     create_list,
+    delete_step,
     get_lists,
     get_myday,
+    get_steps,
     get_task,
     get_tasks,
     get_tasks_by_list,
     get_timezone,
     init_db,
+    mark_step_done,
     mark_task_undone,
     remove_from_myday,
     set_deadline,
     set_important,
+    set_note,
     set_recurrence,
     set_reminder_at,
     update_task_description,
@@ -138,6 +143,8 @@ class TaskPatch(BaseModel):
     clear_reminder: bool = False
     recurrence: str | None = None
     clear_recurrence: bool = False
+    notes: str | None = None
+    clear_notes: bool = False
 
 
 class ListCreate(BaseModel):
@@ -146,6 +153,14 @@ class ListCreate(BaseModel):
 
 class MyDayToggle(BaseModel):
     on: bool = True
+
+
+class StepCreate(BaseModel):
+    description: str
+
+
+class StepToggle(BaseModel):
+    done: bool = True
 
 
 @asynccontextmanager
@@ -234,7 +249,60 @@ async def api_patch_task(
         if body.recurrence not in RECURRENCES:
             raise HTTPException(status_code=422, detail="bad recurrence")
         set_recurrence(task_id, body.recurrence)
+    if body.clear_notes:
+        set_note(task_id, None)
+    elif body.notes is not None:
+        set_note(task_id, body.notes)
     return _decorate(get_task(task_id), _now_utc())
+
+
+def _require_step(user_id: int, task_id: int, step_id: int) -> None:
+    _require_own_task(user_id, task_id)
+    if step_id not in {s["id"] for s in get_steps(task_id)}:
+        raise HTTPException(status_code=404, detail="step not found")
+
+
+@app.get("/api/tasks/{task_id}/steps")
+async def api_steps(
+    task_id: int, user_id: int = Depends(current_user_id)
+) -> list[dict]:
+    _require_own_task(user_id, task_id)
+    return get_steps(task_id)
+
+
+@app.post("/api/tasks/{task_id}/steps")
+async def api_add_step(
+    task_id: int,
+    body: StepCreate,
+    user_id: int = Depends(current_user_id),
+) -> dict:
+    _require_own_task(user_id, task_id)
+    desc = body.description.strip()
+    if not desc:
+        raise HTTPException(status_code=422, detail="empty step")
+    return {"id": add_step(task_id, desc), "description": desc,
+            "completed": False}
+
+
+@app.post("/api/tasks/{task_id}/steps/{step_id}/toggle")
+async def api_toggle_step(
+    task_id: int,
+    step_id: int,
+    body: StepToggle,
+    user_id: int = Depends(current_user_id),
+) -> dict:
+    _require_step(user_id, task_id, step_id)
+    return {"ok": mark_step_done(step_id, body.done)}
+
+
+@app.delete("/api/tasks/{task_id}/steps/{step_id}")
+async def api_delete_step(
+    task_id: int,
+    step_id: int,
+    user_id: int = Depends(current_user_id),
+) -> dict:
+    _require_step(user_id, task_id, step_id)
+    return {"ok": delete_step(step_id)}
 
 
 @app.get("/api/myday")
