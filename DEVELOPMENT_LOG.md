@@ -575,3 +575,30 @@ active, не уведомляли), `mark_overdue_notified`. Старые
 TOTAL 99.80%; ruff чист.
 
 **Статус:** PR #17 → merge → авто-деплой. Далее 7.2 (планировщик).
+
+---
+
+## Этап 21: Фаза 7.2 — планировщик: напоминания + просрочка
+
+**Дата:** 2026-05-19
+
+**Описание:** Ветка `phase/7.2-scheduler-deadline`. `check_and_send_
+reminders` переведён со старой `get_due_tasks` (по `due_date`) на новую
+модель: общий хелпер `_notify(bot, tasks, prefix, mark)` шлёт
+`prefix: описание` и помечает успешные (анти-дубль; ошибка отправки —
+не помечаем, повтор на след. тике). Два прохода за тик:
+напоминания — `get_due_reminders` → «Напоминаю» → `mark_reminder_sent`;
+просрочка — `get_overdue_tasks` → «Просрочено» → `mark_overdue_notified`.
+Задача с прошедшими и `reminder_at`, и `deadline` получит оба
+уведомления.
+
+Легаси `get_due_tasks`/`due_date`/`set_reminder` не удалялись (их
+прямые тесты — `test_scheduler` get_due_tasks_*, `test_search_reminders`
+— остаются зелёными); чистка/перевод команд — в 7.3. Тесты
+`test_check_and_send_*` переписаны под `set_reminder_at`/`set_deadline`,
+добавлены кейсы просрочки и «напоминание+просрочка вместе».
+
+**Результат:** 184 теста зелёные; `bot.py`/`database.py`/`scheduler.py`/
+`tzutil.py` 100%, `config.py` 80%, TOTAL 99.80%; ruff чист.
+
+**Статус:** PR #18 → merge → авто-деплой. Далее 7.3 (команды/хелп).

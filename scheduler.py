@@ -11,39 +11,55 @@ from datetime import UTC, datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from config import SCHEDULER_CHECK_INTERVAL
-from database import get_due_tasks, mark_reminder_sent
+from database import (
+    get_due_reminders,
+    get_overdue_tasks,
+    mark_overdue_notified,
+    mark_reminder_sent,
+)
 
 logger = logging.getLogger(__name__)
 
 _TIME_FMT = "%Y-%m-%d %H:%M:%S"
 
 
-async def check_and_send_reminders(bot, now: datetime | None = None) -> int:
-    """
-    Находит задачи с наступившим `due_date` и шлёт напоминание.
+async def _notify(bot, tasks, prefix, mark) -> int:
+    """Шлёт `prefix: описание` каждой задаче; помечает успешные.
 
-    Возвращает число успешно отправленных. Анти-дубль: после успешной
-    отправки задача помечается `reminder_sent=1`, поэтому повторный вызов
-    её не возьмёт. При ошибке отправки задача НЕ помечается — повтор на
-    следующем тике (приоритет — доставить напоминание).
-
-    `now` по умолчанию — текущее UTC (наивная строка), т.к. `due_date`
-    хранится в UTC (Фаза 5.8).
+    Анти-дубль: успех → `mark(task_id)`. Ошибка отправки → НЕ помечаем
+    (повтор на следующем тике, приоритет — доставить).
     """
-    now = now or datetime.now(UTC).replace(tzinfo=None)
-    now_str = now.strftime(_TIME_FMT)
     sent = 0
-    for task in get_due_tasks(now_str):
+    for task in tasks:
         try:
             await bot.send_message(
                 chat_id=task["user_id"],
-                text=f"Напоминаю: {task['description']}",
+                text=f"{prefix}: {task['description']}",
             )
         except Exception as e:
-            logger.error("reminder send failed task=%s: %s", task["id"], e)
+            logger.error("notify failed task=%s: %s", task["id"], e)
             continue
-        mark_reminder_sent(task["id"])
+        mark(task["id"])
         sent += 1
+    return sent
+
+
+async def check_and_send_reminders(bot, now: datetime | None = None) -> int:
+    """
+    Шлёт напоминания (наступил `reminder_at`) и уведомления о просрочке
+    (прошёл `deadline`). Возвращает общее число отправленных сообщений.
+
+    `now` по умолчанию — текущее UTC (наивная строка; время хранится в
+    UTC, Фаза 5.8).
+    """
+    now = now or datetime.now(UTC).replace(tzinfo=None)
+    now_str = now.strftime(_TIME_FMT)
+    sent = await _notify(
+        bot, get_due_reminders(now_str), "Напоминаю", mark_reminder_sent
+    )
+    sent += await _notify(
+        bot, get_overdue_tasks(now_str), "Просрочено", mark_overdue_notified
+    )
     return sent
 
 
