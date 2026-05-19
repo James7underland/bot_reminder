@@ -125,7 +125,7 @@ async def test_reschedule_bad_date():
 
 async def test_reschedule_success():
     u = make_update()
-    with patch.object(bot, "set_reminder", return_value=True) as m:
+    with patch.object(bot, "set_reminder_at", return_value=True) as m:
         await bot.reschedule_command(u, make_context(["7", "2026-05-18", "15:00"]))
     m.assert_called_once_with(7, "2026-05-18 15:00:00")
     assert "перенесено" in reply(u).lower()
@@ -133,7 +133,7 @@ async def test_reschedule_success():
 
 async def test_reschedule_not_found():
     u = make_update()
-    with patch.object(bot, "set_reminder", return_value=False):
+    with patch.object(bot, "set_reminder_at", return_value=False):
         await bot.reschedule_command(u, make_context(["7", "2026-05-18", "15:00"]))
     assert "не найдена" in reply(u).lower()
 

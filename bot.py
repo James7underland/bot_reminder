@@ -32,11 +32,11 @@ from database import (
     remove_from_myday,
     rename_list,
     search_tasks,
+    set_deadline,
     set_important,
     set_note,
     set_recurrence,
-    set_remind_before,
-    set_reminder,
+    set_reminder_at,
     set_timezone,
     update_task_description,
 )
@@ -131,7 +131,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/done <номер> - Отметить задачу как выполненную\n"
         "/undone <номер> - Вернуть задачу в активные\n"
         "/edit <номер> <описание> - Изменить описание\n"
-        "/reschedule <номер> <YYYY-MM-DD HH:MM> - Перенести напоминание\n"
+        "/deadline <id> <YYYY-MM-DD HH:MM|off> - Срок (просрочка→красный)\n"
+        "/remind <id> <YYYY-MM-DD HH:MM|off> - Время напоминания\n"
+        "/reschedule <id> <YYYY-MM-DD HH:MM> - Перенести напоминание\n"
         "/lists - Показать списки\n"
         "/newlist <имя> - Создать список\n"
         "/renamelist <id> <имя> - Переименовать список\n"
@@ -149,7 +151,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/delnote <task_id> - Удалить заметку\n"
         "/myday [add|remove <id>] - «Мой день» (на сегодня)\n"
         "/search <текст> - Поиск по задачам\n"
-        "/remindbefore <task_id> <минут|off> - Напомнить за N мин до срока\n"
         "/timezone [IANA] - Показать/задать часовой пояс (напр. Europe/Moscow)"
     )
     await update.message.reply_text(help_text)
@@ -173,6 +174,9 @@ async def add_task_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             to_utc(due_date, get_timezone(user_id)) if due_date else None
         )
         task_id = add_task(user_id, description, due_store)
+        if due_store:
+            # Новая модель: дата в /add = напоминание (reminder_at).
+            set_reminder_at(task_id, due_store)
         if due_date:
             msg = f'Задача "{description}" добавлена! Напоминание: {due_date}.'
         else:
@@ -300,7 +304,7 @@ async def reschedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return
     due_store = to_utc(due, get_timezone(update.effective_user.id))
-    if set_reminder(task_id, due_store):
+    if set_reminder_at(task_id, due_store):
         await update.message.reply_text(
             f"Напоминание №{task_id} перенесено на {due}."
         )
@@ -681,13 +685,11 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.reply_text(text)
 
 
-async def remindbefore_command(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
-    """Напоминание за N минут до срока: /remindbefore <task_id> <минут|off>."""
+async def _set_when(update, context, cmd: str, kind: str, setter) -> None:
+    """Общий хелпер для /deadline и /remind (срок/напоминание + off)."""
     if not context.args or len(context.args) < 2:
         await update.message.reply_text(
-            "Использование: /remindbefore <task_id> <минут|off>"
+            f"Использование: /{cmd} <id> <YYYY-MM-DD HH:MM | off>"
         )
         return
     try:
@@ -695,29 +697,40 @@ async def remindbefore_command(
     except ValueError:
         await update.message.reply_text("ID задачи должен быть числом.")
         return
-    raw = context.args[1].lower()
-    if raw in ("off", "0", "нет"):
-        minutes: int | None = None
-    else:
-        try:
-            minutes = int(raw)
-        except ValueError:
-            await update.message.reply_text("Минуты — число или off.")
-            return
-        if minutes < 0:
-            await update.message.reply_text("Минуты не могут быть < 0.")
-            return
-    if not set_remind_before(task_id, minutes):
-        await update.message.reply_text(f"Задача №{task_id} не найдена.")
+    rest = " ".join(context.args[1:]).strip()
+    if rest.lower() in ("off", "нет", "-"):
+        ok = setter(task_id, None)
+        await update.message.reply_text(
+            f"{kind} №{task_id} снят."
+            if ok
+            else f"Задача №{task_id} не найдена."
+        )
         return
-    if minutes is None:
+    when = parse_datetime(rest)
+    if when is None:
         await update.message.reply_text(
-            f"Напоминание для №{task_id} — ровно в срок."
+            "Не понял дату. Форматы: YYYY-MM-DD HH:MM или DD.MM.YYYY HH:MM."
         )
+        return
+    when_store = to_utc(when, get_timezone(update.effective_user.id))
+    if setter(task_id, when_store):
+        await update.message.reply_text(f"{kind} №{task_id}: {when}.")
     else:
-        await update.message.reply_text(
-            f"Напоминание для №{task_id} — за {minutes} мин до срока."
-        )
+        await update.message.reply_text(f"Задача №{task_id} не найдена.")
+
+
+async def deadline_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Срок задачи: /deadline <id> <YYYY-MM-DD HH:MM | off>."""
+    await _set_when(update, context, "deadline", "Срок", set_deadline)
+
+
+async def remind_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Напоминание: /remind <id> <YYYY-MM-DD HH:MM | off>."""
+    await _set_when(update, context, "remind", "Напоминание", set_reminder_at)
 
 
 async def timezone_command(
@@ -784,7 +797,8 @@ def main() -> None:  # pragma: no cover
     application.add_handler(CommandHandler("delnote", delnote_command))
     application.add_handler(CommandHandler("myday", myday_command))
     application.add_handler(CommandHandler("search", search_command))
-    application.add_handler(CommandHandler("remindbefore", remindbefore_command))
+    application.add_handler(CommandHandler("deadline", deadline_command))
+    application.add_handler(CommandHandler("remind", remind_command))
     application.add_handler(CommandHandler("timezone", timezone_command))
     application.add_error_handler(error_handler)
 
