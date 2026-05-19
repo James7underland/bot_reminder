@@ -5,7 +5,7 @@ import calendar
 import logging
 import re
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from config import DATABASE_PATH
 from tzutil import valid_timezone
@@ -928,6 +928,21 @@ def set_reminder_at(task_id: int, reminder_at: str | None) -> bool:
         return True
     logger.warning("set_reminder_at: task=%s not found", task_id)
     return False
+
+
+def snooze_reminder(task_id: int, minutes: int) -> bool:
+    """
+    Откладывает напоминание на `minutes` минут от ТЕКУЩЕГО UTC-времени
+    (а не от старого `reminder_at`) — это семантика «напомни через…».
+    Сбрасывает `reminder_sent` (повторно сработает). False при minutes<=0
+    или если задачи нет.
+    """
+    if minutes <= 0:
+        logger.warning("snooze_reminder: bad minutes %s", minutes)
+        return False
+    now = datetime.now(UTC).replace(tzinfo=None)
+    new_at = (now + timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
+    return set_reminder_at(task_id, new_at)
 
 
 def get_due_reminders(now: str) -> list[dict]:
