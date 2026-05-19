@@ -435,14 +435,21 @@ API+фронтенд итерациями (PR → CI → авто-деплой; 
 - **8.5 ✅ (PR #25):** подзадачи (steps CRUD: GET/POST/toggle/DELETE под `/api/tasks/{id}/steps`, ownership через задачу) + заметки (`notes`/`clear_notes` в PATCH); фронтенд — textarea заметки, чек-лист подзадач с добавлением/✕/тогглом. 220 тестов.
 - **8.6 ✅ (PR #26):** поиск (`GET /api/tasks?search=` → `search_tasks`, перекрывает фильтры) и сортировки (`?sort=important|due|alpha|created` → `get_tasks(sort=)`); фронтенд — строка поиска (debounce) + селектор сортировки. 222 теста.
 - **8.7 ✅ (PR #27):** списки — PATCH/DELETE `/api/lists/{id}` (ownership), перенос `POST /api/tasks/{id}/list`; настройки — GET/PUT `/api/settings` (часовой пояс, валидация ZoneInfo→422); фронтенд — ✎/🗑 списка, селектор «Список» в задаче, ⚙ часовой пояс. 225 тестов. **Mini App = паритет с ботом.**
-- **8.8 (PR #28, инфра):** постоянный `https://ernstgku.beget.tech` без
-  вреда VPN. VPN = VLESS+Reality на :443 (Amnezia) → xray-fallback и
-  второй IP недоступны; решение — **nginx `stream`+`ssl_preread` на
-  :443**: SNI `ernstgku.beget.tech` → Caddy:8443 → webapp, всё прочее →
-  xray (перепубликован на 127.0.0.1:8444; конфиг xray НЕ тронут).
+- **8.8 (PR #28, инфра):** SNI-роутер на :443 без вреда VPN. VPN =
+  VLESS+Reality на :443 (Amnezia) → xray-fallback и второй IP
+  недоступны; решение — **nginx `stream`+`ssl_preread` на :443**: SNI
+  домена Mini App → Caddy:8443 → webapp, всё прочее → xray
+  (перепубликован на 127.0.0.1:8444; конфиг xray НЕ тронут).
   `deploy/nginx-sni.conf`, `Caddyfile` (https_port 8443), runbook §6 +
   откат. Пересоздание контейнера — по `docker inspect` пользователя
   (commit-бэкап, Reality-ключи сохраняются).
+- **8.9 (PR #29, инфра):** домен решён. `ernstgku.beget.tech`
+  (технический Beget) A-запись менять нельзя → тупик. Зарегистрирован
+  **`reminderr.ru`** (Beget, .RU 199 ₽/год), A → VPS
+  `155.212.227.167` (Beget DNS, NS не трогаем). Конфиги
+  `deploy/Caddyfile`/`nginx-sni.conf`/`DEPLOYMENT.md` переведены на
+  `reminderr.ru`. Путь А (нативный `https://reminderr.ru` через
+  SNI-роутер) — то, что изначально и хотел пользователь.
 - **8.3b (с пользователем):** HTTPS наружу. Caddy отпал — :443 занят
   VPN (`amnezia-xray`). Идём через `cloudflared` (исходящий, без
   конфликта): быстрый туннель работает (`*.trycloudflare.com`),
