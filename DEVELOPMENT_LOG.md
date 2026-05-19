@@ -944,3 +944,28 @@ TOTAL 99.77%; ruff чист.
 **Статус:** PR #30 → merge → авто-деплой обновит Mini App; туннель/
 сертификат/VPN не трогаются (как обычно). Далее 9.2 — smart-views
 «Планируется» и «Важно» как отдельные экраны.
+
+---
+
+## Этап 34: Фаза 9.2 — smart-views «Планируется» и «Важно»
+
+**Дата:** 2026-05-20
+
+**Описание:** Ветка `phase/9.2-smart-views`. БД: `get_planned(user)` —
+актив + (deadline OR reminder_at), сорт по `deadline IS NULL, deadline,
+reminder_at IS NULL, reminder_at, created_at`; `get_important_tasks(user)` —
+актив + `important=1`, сорт по дедлайну. Общий хелпер `_rows_to_tasks`
+приводит `completed`/`important` к Python bool. API: `GET /api/planned`,
+`GET /api/important` (ownership через initData). Фронтенд: чекбокс
+`#myDay` заменён на селектор `#viewSel` с пунктами Все/🗓 Мой день/
+📅 Планируется/⭐ Важно; `load()` маршрутизирует к нужному эндпоинту;
+поиск перекрывает view, как и раньше.
+
+**Результат:** 247 тестов зелёные (+2 в `test_webapp.py` — DB-фильтры
+и ordering + API + 401 без авторизации); `bot.py`/`database.py`/
+`scheduler.py`/`tzutil.py` 100%, `config.py` 80%, `webapp.py` 99%,
+TOTAL 99.77%; ruff чист.
+
+**Статус:** PR #31 → merge → авто-деплой обновит Mini App (туннель/
+сертификат/VPN не трогаются). Далее 9.3 — snooze напоминания (+15 мин /
++1 ч / завтра).

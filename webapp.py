@@ -28,8 +28,10 @@ from database import (
     create_list,
     delete_list,
     delete_step,
+    get_important_tasks,
     get_lists,
     get_myday,
+    get_planned,
     get_steps,
     get_task,
     get_tasks,
@@ -332,6 +334,20 @@ async def api_myday(user_id: int = Depends(current_user_id)) -> list[dict]:
     tasks = get_myday(user_id, _today_local(user_id))
     now = _now_utc()
     return [_decorate(t, now) for t in tasks]
+
+
+@app.get("/api/planned")
+async def api_planned(user_id: int = Depends(current_user_id)) -> list[dict]:
+    now = _now_utc()
+    return [_decorate(t, now) for t in get_planned(user_id)]
+
+
+@app.get("/api/important")
+async def api_important(
+    user_id: int = Depends(current_user_id),
+) -> list[dict]:
+    now = _now_utc()
+    return [_decorate(t, now) for t in get_important_tasks(user_id)]
 
 
 @app.post("/api/tasks/{task_id}/myday")

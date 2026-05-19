@@ -85,11 +85,14 @@
   </select>
 </div>
 <div class="bar">
+  <select id="viewSel">
+    <option value="all">Все задачи</option>
+    <option value="myday">🗓 Мой день</option>
+    <option value="planned">📅 Планируется</option>
+    <option value="important">⭐ Важно</option>
+  </select>
   <label style="color:var(--hint);font-size:13px">
-    <input type="checkbox" id="showDone"> показывать выполненные
-  </label>
-  <label style="color:var(--hint);font-size:13px;margin-left:14px">
-    <input type="checkbox" id="myDay"> 🗓 Мой день
+    <input type="checkbox" id="showDone"> с выполненными
   </label>
 </div>
 <ul id="list"></ul>
@@ -141,10 +144,15 @@ function esc(s){ return String(s).replace(/[&<>"]/g,
 async function load(){
   let tasks;
   const sq = $("#search").value.trim();
+  const view = $("#viewSel").value;
   if (sq) {
     tasks = await api("/tasks?search=" + encodeURIComponent(sq));
-  } else if ($("#myDay").checked) {
+  } else if (view === "myday") {
     tasks = await api("/myday");
+  } else if (view === "planned") {
+    tasks = await api("/planned");
+  } else if (view === "important") {
+    tasks = await api("/important");
   } else {
     let q = "?completed=" + ($("#showDone").checked ? "true" : "false");
     if (listId !== "all") q += "&list_id=" + listId;
@@ -366,7 +374,7 @@ $("#addBtn").onclick = addTask;
 $("#newTask").addEventListener("keydown",
   e => { if (e.key === "Enter") addTask(); });
 $("#showDone").onchange = load;
-$("#myDay").onchange = load;
+$("#viewSel").onchange = load;
 $("#sortSel").onchange = load;
 let _searchT;
 $("#search").addEventListener("input", () => {
