@@ -602,3 +602,38 @@ reminders` переведён со старой `get_due_tasks` (по `due_date`
 `tzutil.py` 100%, `config.py` 80%, TOTAL 99.80%; ruff чист.
 
 **Статус:** PR #18 → merge → авто-деплой. Далее 7.3 (команды/хелп).
+
+---
+
+## Этап 22: Фаза 7.3 — команды под новую модель (Фаза 7 завершена)
+
+**Дата:** 2026-05-19
+
+**Описание:** Ветка `phase/7.3-commands-new-model`. Slash-команды
+приведены к модели срок/напоминание (slash — фолбэк, основной UI будет
+Mini App):
+- Новые `/deadline <id> <when|off>` и `/remind <id> <when|off>` через
+  общий хелпер `_set_when` (tz пользователя → UTC, `off/нет/-` —
+  сброс).
+- `/add <desc> <when>` теперь дополнительно ставит `reminder_at`
+  (раньше писал только legacy `due_date`, который новый планировщик не
+  читает — напоминания из `/add` снова работают).
+- `/reschedule` переключён с `set_reminder` на `set_reminder_at`.
+- Команда `/remindbefore` удалена: её модель (за N минут до срока) в
+  новой схеме не существует; это удаление устаревшей фичи, а не
+  «починка тестов удалением». Хелп обновлён.
+- Легаси DB-функции (`set_reminder`/`set_remind_before`/`get_due_tasks`/
+  `due_date`/`remind_before`) пока оставлены (их прямые DB-тесты
+  зелёные); полная зачистка — отдельной уборочной фазой при желании.
+
+Тесты: reschedule-тесты перенацелены на `set_reminder_at`; удалены
+тесты обработчика `/remindbefore`; добавлен `tests/test_deadline_cmd.py`
+(валидация, успех с tz→UTC, off, не найдено для /deadline и /remind).
+
+**Результат:** 191 тест зелёный; `bot.py`/`database.py`/`scheduler.py`/
+`tzutil.py` 100%, `config.py` 80%, TOTAL 99.80%; ruff чист.
+**Фаза 7 (бэкенд-редизайн) полностью завершена.**
+
+**Статус:** PR #19 → merge → авто-деплой. Далее Фаза 8 — Telegram
+Mini App (FastAPI + initData-авторизация + фронтенд + Cloudflare
+Tunnel).
