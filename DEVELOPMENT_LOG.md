@@ -1035,3 +1035,48 @@ per-user гарантирована `add_task`, поэтому простой с
 
 **Статус:** PR #33 → merge → авто-деплой. Далее 9.5 — UI-полировка
 (прогресс подзадач, заметнее «срочно/просрочено», порядок/цвет списков).
+
+---
+
+## Этап 37: Фаза 9.5 — UI-полировка (счётчик подзадач + цвет списка)
+
+**Дата:** 2026-05-20
+
+**Описание:** Ветка `phase/9.5-polish`. (a) Счётчик подзадач: новая
+`get_steps_counts(user_id) -> {task_id: {"done": N, "total": M}}` —
+один SQL `JOIN tasks ON steps.task_id = tasks.id GROUP BY task_id`,
+чтобы избежать N+1 при отрисовке списка. `_decorate(task, now, counts)`
+получает опциональный аргумент `counts` и добавляет `steps_done` /
+`steps_total` (0/0 если в counts нет). Каждый list-эндпоинт
+(`/api/tasks`, `/api/myday`, `/api/planned`, `/api/important`) делает
+ровно один вызов `get_steps_counts` и применяет к каждому элементу.
+Фронтенд: в `meta` задачи (под текстом) появляется строка `📋 N/M`,
+когда `steps_total > 0`.
+
+(b) Цвет списка: добавлена колонка `lists.color TEXT NOT NULL
+DEFAULT '#0088CC'` (миграция идемпотентна, CREATE TABLE тоже обновлён);
+валидация `is_valid_color('#RRGGBB')` через regex `^#[0-9A-Fa-f]{6}$`;
+`set_list_color(list_id, color) -> bool` пишет цвет и возвращает False
+для битых значений/несуществующих id. Pydantic `ListPatch` теперь
+`name: str | None` + `color: str | None`; эндпоинт `PATCH /api/lists/
+{id}` 422 на пустое тело, 422 на битый цвет, возвращает полный dict
+списка (старый тест переписан под более широкий контракт). Фронтенд:
+к панели списков добавлена кнопка 🎨, которая создаёт скрытый
+`<input type="color">` с текущим значением и открывает нативный
+системный пикер; опции селекта окрашены `style="color:<hex>"` с
+префиксом `●` (плотно поддерживается в Chrome/Firefox/Safari).
+
+**Результат:** 261 тест зелёный (+4: `get_steps_counts` агрегирует и
+не возвращает задачи без подзадач; `/api/tasks` и `/api/myday`
+декорируют `steps_*`; валидатор цвета + `set_list_color` happy/
+unhappy; API `PATCH /api/lists/{id}` принимает color/имя/оба, 422 на
+пустое тело и битый цвет, 404 на чужую); `bot.py`/`scheduler.py`/
+`tzutil.py` 100%, `database.py` 99% (миграция-ALTER не покрыта, т.к.
+тестовая БД свежая), `webapp.py` 99%, `config.py` 80%, TOTAL 99.72%;
+ruff чист.
+
+**Статус:** PR #34 → merge → авто-деплой. Phase 9 (MS To Do parity
+finishing) **завершена**: 9.1 custom recurrence, 9.2 smart-views,
+9.3 snooze, 9.4 manual reorder, 9.5 UI polish — все в `main`. Из
+изначально объявленного «вне области» осталось только sharing/
+multi-user и файловые вложения (отдельная фаза, если понадобится).

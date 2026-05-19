@@ -33,6 +33,7 @@ from database import (
     get_myday,
     get_planned,
     get_steps,
+    get_steps_counts,
     get_task,
     get_tasks,
     get_tasks_by_list,
@@ -48,6 +49,7 @@ from database import (
     search_tasks,
     set_deadline,
     set_important,
+    set_list_color,
     set_note,
     set_recurrence,
     set_reminder_at,
@@ -123,12 +125,24 @@ def _today_local(user_id: int) -> str:
     return to_local(_now_utc(), get_timezone(user_id))[:10]
 
 
-def _decorate(task: dict, now: str) -> dict:
-    """Добавляет вычисляемый флаг `overdue` (срок прошёл, не выполнено)."""
+def _decorate(
+    task: dict,
+    now: str,
+    counts: dict[int, dict[str, int]] | None = None,
+) -> dict:
+    """
+    Декорирует задачу служебными полями для UI:
+    - `overdue` — срок прошёл и задача активна.
+    - `steps_done`/`steps_total` — счётчики подзадач (только если
+      `counts` передан и задача в нём есть; иначе оба 0).
+    """
     dl = task.get("deadline")
     task["overdue"] = bool(
         dl and not task["completed"] and dl < now
     )
+    c = (counts or {}).get(task["id"], {"done": 0, "total": 0})
+    task["steps_done"] = c["done"]
+    task["steps_total"] = c["total"]
     return task
 
 
@@ -163,7 +177,8 @@ class ListCreate(BaseModel):
 
 
 class ListPatch(BaseModel):
-    name: str
+    name: str | None = None
+    color: str | None = None
 
 
 class MoveList(BaseModel):
@@ -220,7 +235,8 @@ async def api_tasks(
         real = None if list_id == 0 else list_id
         tasks = get_tasks_by_list(user_id, real, completed=completed)
     now = _now_utc()
-    return [_decorate(t, now) for t in tasks]
+    counts = get_steps_counts(user_id)
+    return [_decorate(t, now, counts) for t in tasks]
 
 
 @app.post("/api/tasks")
@@ -340,13 +356,15 @@ async def api_delete_step(
 async def api_myday(user_id: int = Depends(current_user_id)) -> list[dict]:
     tasks = get_myday(user_id, _today_local(user_id))
     now = _now_utc()
-    return [_decorate(t, now) for t in tasks]
+    counts = get_steps_counts(user_id)
+    return [_decorate(t, now, counts) for t in tasks]
 
 
 @app.get("/api/planned")
 async def api_planned(user_id: int = Depends(current_user_id)) -> list[dict]:
     now = _now_utc()
-    return [_decorate(t, now) for t in get_planned(user_id)]
+    counts = get_steps_counts(user_id)
+    return [_decorate(t, now, counts) for t in get_planned(user_id)]
 
 
 @app.get("/api/important")
@@ -354,7 +372,8 @@ async def api_important(
     user_id: int = Depends(current_user_id),
 ) -> list[dict]:
     now = _now_utc()
-    return [_decorate(t, now) for t in get_important_tasks(user_id)]
+    counts = get_steps_counts(user_id)
+    return [_decorate(t, now, counts) for t in get_important_tasks(user_id)]
 
 
 @app.post("/api/tasks/{task_id}/myday")
@@ -431,11 +450,25 @@ async def api_rename_list(
     user_id: int = Depends(current_user_id),
 ) -> dict:
     _require_own_list(user_id, list_id)
-    name = body.name.strip()
-    if not name:
-        raise HTTPException(status_code=422, detail="empty name")
-    rename_list(list_id, name)
-    return {"id": list_id, "name": name}
+    if body.name is None and body.color is None:
+        raise HTTPException(
+            status_code=422, detail="nothing to update"
+        )
+    if body.name is not None:
+        name = body.name.strip()
+        if not name:
+            raise HTTPException(status_code=422, detail="empty name")
+        rename_list(list_id, name)
+    if body.color is not None:
+        if not set_list_color(list_id, body.color):
+            raise HTTPException(
+                status_code=422,
+                detail="bad color (expected '#RRGGBB')",
+            )
+    lst = next(
+        (lst for lst in get_lists(user_id) if lst["id"] == list_id), None
+    )
+    return lst or {"id": list_id}
 
 
 @app.delete("/api/lists/{list_id}")
