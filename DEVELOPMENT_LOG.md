@@ -878,3 +878,29 @@ ruff чист.
 **Статус:** PR #28 → merge → авто-деплой (nginx/caddy/xray ставятся
 вручную по runbook). Далее с пользователем: `docker inspect
 amnezia-xray` → генерирую точную безопасную команду пересоздания.
+
+---
+
+## Этап 32: Фаза 8.9 — домен `reminderr.ru` (тупик с beget.tech)
+
+**Дата:** 2026-05-19
+
+**Описание:** Beget подтвердил: у технического поддомена
+`ernstgku.beget.tech` A-запись менять нельзя (только виртуальный
+хостинг) → для VPS непригоден, путь с ним закрыт. Пользователь
+зарегистрировал настоящий домен **`reminderr.ru`** (Beget, зона .RU,
+199 ₽/год) и при регистрации направил его A-записью на VPS
+`155.212.227.167` (DNS Beget, NS не меняем — Cloudflare не нужен).
+Это разблокировало изначально желаемый путь А: нативный
+`https://reminderr.ru` через SNI-роутер (нулевой Cloudflare).
+
+Ветка `phase/8.9-domain-reminderr`: в `deploy/Caddyfile`,
+`deploy/nginx-sni.conf`, `DEPLOYMENT.md` домен заменён
+`ernstgku.beget.tech` → `reminderr.ru` (исторические записи журнала не
+переписываем — beget-тупик часть истории). Python не менялся → 225
+тестов зелёные, ruff чист.
+
+**Статус:** PR #29 → merge → авто-деплой кладёт верные конфиги на
+сервер. Ждём активации домена (`nslookup reminderr.ru` =
+155.212.227.167), затем runbook §6 (webapp → Caddy → commit-бэкап
+xray → cutover → nginx → проверка Mini App+VPN → @BotFather).
