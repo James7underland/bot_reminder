@@ -754,6 +754,50 @@ def get_myday(user_id: int, day: str) -> list[dict]:
     return result
 
 
+# --- Smart-views (Фаза 9.2) ---
+
+def _rows_to_tasks(rows) -> list[dict]:
+    out = []
+    for row in rows:
+        t = dict(row)
+        t["completed"] = bool(t["completed"])
+        t["important"] = bool(t["important"])
+        out.append(t)
+    return out
+
+
+def get_planned(user_id: int) -> list[dict]:
+    """Активные задачи с дедлайном или напоминанием. Срок раньше — выше."""
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM tasks WHERE user_id = ? AND completed = 0 "
+        "AND (deadline IS NOT NULL OR reminder_at IS NOT NULL) "
+        "ORDER BY deadline IS NULL, deadline, "
+        "reminder_at IS NULL, reminder_at, created_at",
+        (user_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return _rows_to_tasks(rows)
+
+
+def get_important_tasks(user_id: int) -> list[dict]:
+    """Активные важные задачи. Срок раньше — выше."""
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM tasks WHERE user_id = ? AND completed = 0 "
+        "AND important = 1 ORDER BY deadline IS NULL, deadline, created_at",
+        (user_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return _rows_to_tasks(rows)
+
+
 # --- Поиск и гибкие напоминания (Фаза 5.7) ---
 
 def search_tasks(user_id: int, query: str) -> list[dict]:

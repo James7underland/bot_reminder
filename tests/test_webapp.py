@@ -506,3 +506,60 @@ def test_settings_timezone(client):
     assert client.put(
         "/api/settings", json={"timezone": "Mars/Olympus"}, headers=hdr()
     ).status_code == 422
+
+
+# --- Фаза 9.2: smart-views (Planned, Important) ---
+
+def test_db_get_planned_filters_and_orders():
+    from database import (
+        add_task,
+        get_important_tasks,
+        get_planned,
+        mark_task_done,
+        set_deadline,
+        set_important,
+        set_reminder_at,
+    )
+    # 42 — пользователь под тест; пара задач разной формы
+    plain = add_task(42, "plain")                   # без дедлайна/напом. → нет
+    early = add_task(42, "early")
+    set_deadline(early, "2026-05-19 09:00:00")
+    late = add_task(42, "late")
+    set_deadline(late, "2026-05-20 09:00:00")
+    rem = add_task(42, "reminder-only")
+    set_reminder_at(rem, "2026-05-19 18:00:00")     # дедлайна нет, напом. есть
+    done = add_task(42, "done")
+    set_deadline(done, "2026-05-19 10:00:00")
+    mark_task_done(done)
+    other = add_task(99, "other")                   # чужой
+    set_deadline(other, "2026-05-19 09:00:00")
+    assert plain and other  # silence
+
+    ids = [t["id"] for t in get_planned(42)]
+    # сначала по дедлайну (early, late), потом напоминание-only (rem);
+    # без дедлайна/напом. (plain) и выполненная (done), и чужие — не входят
+    assert ids == [early, late, rem]
+
+    # important
+    set_important(late, True)
+    assert [t["id"] for t in get_important_tasks(42)] == [late]
+
+
+def test_api_planned_and_important(client):
+    a = client.post("/api/tasks", json={"description": "a"}, headers=hdr()).json()["id"]
+    b = client.post("/api/tasks", json={"description": "b"}, headers=hdr()).json()["id"]
+    # a: дедлайн; b: только напоминание + важная
+    client.patch(f"/api/tasks/{a}",
+                 json={"deadline": "2026-05-19 09:00"}, headers=hdr())
+    client.patch(f"/api/tasks/{b}",
+                 json={"reminder_at": "2026-05-19 10:00", "important": True},
+                 headers=hdr())
+    planned = [t["id"] for t in client.get(
+        "/api/planned", headers=hdr()).json()]
+    assert planned == [a, b]
+    imp = [t["id"] for t in client.get(
+        "/api/important", headers=hdr()).json()]
+    assert imp == [b]
+    # авторизация требуется
+    assert client.get("/api/planned").status_code == 401
+    assert client.get("/api/important").status_code == 401
