@@ -72,31 +72,25 @@ PostgreSQL вынесена в отдельную фазу: SQL изолиров
 Делать, когда появится реальная потребность (несколько инстансов/высокая
 конкуренция).
 
-## 6. Telegram Mini App (Фаза 8.3) — на сервере
+## 6. Telegram Mini App — SNI-роутер на :443 (Фаза 8.8)
 
-Бэкенд Mini App (`webapp.py`) слушает только `127.0.0.1:8080`; наружу
-отдаётся через Cloudflare Tunnel (HTTPS). Токен берётся из того же
-`.env`.
+`webapp.py` слушает `127.0.0.1:8080`. На :443 — nginx `stream` +
+`ssl_preread`: по SNI отдаёт `ernstgku.beget.tech` в Caddy (HTTPS
+:8443 → webapp), всё прочее — в xray (VPN). Конфиг xray не меняется,
+меняется только порт его публикации в Docker.
 
-**6.1. Сервис webapp (uvicorn):**
+Предусловия: A-запись `ernstgku.beget.tech` → IP VPS; открыты 80/443.
+
+**6.1. Сервис webapp:**
 ```bash
 cd ~/bot_reminder && git pull --ff-only
-./.venv/bin/pip install -r requirements.txt        # fastapi, uvicorn
+./.venv/bin/pip install -r requirements.txt
 cp deploy/bot_webapp.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now bot_webapp
+systemctl daemon-reload && systemctl enable --now bot_webapp
 curl -s localhost:8080/healthz                     # {"ok":true}
 ```
 
-**6.2. HTTPS через Caddy (выбранный путь).** Стабильный
-`https://ernstgku.beget.tech`, авто-сертификат Let's Encrypt.
-
-Предусловия:
-- A-запись `ernstgku.beget.tech` → IP VPS (в панели Beget).
-- На VPS открыты входящие **80 и 443** (firewall провайдера + сервера:
-  `ufw allow 80,443/tcp` если включён ufw).
-
-Установка Caddy (Ubuntu) и конфиг из репозитория:
+**6.2. Caddy на :8443 (за роутером, ACME по :80):**
 ```bash
 apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
@@ -104,24 +98,46 @@ curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
   | tee /etc/apt/sources.list.d/caddy-stable.list
 apt update && apt install -y caddy
-
 cp ~/bot_reminder/deploy/Caddyfile /etc/caddy/Caddyfile
-systemctl reload caddy
-sleep 3
+systemctl restart caddy
+```
+
+**6.3. Перепубликация порта xray (деликатный шаг).** Конфиг xray НЕ
+редактируем. Контейнер пересоздаётся с тем же образом/сетью/volume/env,
+но порт `0.0.0.0:443` → `127.0.0.1:8444`. Перед этим — резервный образ
+для отката:
+```bash
+docker commit amnezia-xray amnezia-xray:prebackup
+docker inspect amnezia-xray > ~/amnezia-xray.inspect.json
+```
+Точную команду `docker rm` + `docker run` (с сохранением всех
+mounts/env/network/restart из inspect) сгенерировать по содержимому
+`amnezia-xray.inspect.json` — НЕ пересоздавать «вслепую».
+
+**6.4. nginx SNI-роутер на :443:**
+```bash
+apt install -y nginx
+nginx -V 2>&1 | tr ' ' '\n' | grep -q stream && echo "stream OK"
+cp ~/bot_reminder/deploy/nginx-sni.conf /etc/nginx/stream-sni.conf
+grep -q stream-sni /etc/nginx/nginx.conf \
+  || echo 'include /etc/nginx/stream-sni.conf;' >> /etc/nginx/nginx.conf
+nginx -t && systemctl restart nginx
+```
+
+**6.5. Проверка:**
+```bash
 curl -sI https://ernstgku.beget.tech/healthz | head -1   # HTTP/2 200
 ```
-Caddy сам получит сертификат при первом запросе (нужно, чтобы DNS уже
-указывал на сервер; первая выдача — до минуты).
+И отдельно проверить, что VPN-клиент по-прежнему подключается.
 
-*Альтернатива (если домена/портов нет):* Cloudflare-туннель —
-`deploy/cloudflared.service` + быстрый
-`cloudflared tunnel --url http://127.0.0.1:8080`.
+**6.6. Регистрация в @BotFather:** `/mybots` → бот → Bot Settings →
+Menu Button → URL `https://ernstgku.beget.tech`. После этого
+`cloudflared-quick` можно отключить:
+`systemctl disable --now cloudflared-quick`.
 
-**6.3. Регистрация Mini App в @BotFather:**
-- `/mybots` → бот → **Bot Settings → Menu Button** → задать URL
-  `https://ernstgku.beget.tech` (и/или `/newapp` → тот же URL).
-- В боте появится кнопка, открывающая интерфейс.
+**6.7. Откат:** `systemctl stop nginx`; пересоздать `amnezia-xray` из
+`amnezia-xray:prebackup` с `-p 0.0.0.0:443:443` → VPN снова напрямую
+на 443 (Mini App вернуть на Cloudflare-туннель).
 
-**Авто-деплой:** `deploy.yml` после `git pull` рестартит и
-`bot_reminder`, и `bot_webapp` (best-effort: пока юнит не создан —
-шаг не падает).
+**Авто-деплой:** `deploy.yml` рестартит `bot_reminder` и `bot_webapp`;
+nginx/caddy/xray не трогает (их меняем вручную, редко).

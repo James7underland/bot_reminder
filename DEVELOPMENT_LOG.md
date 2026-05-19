@@ -847,3 +847,34 @@ textarea «Заметка» (сохраняется кнопкой; пусто �
 фолбэк.
 
 **Статус:** PR #27 → merge → авто-деплой. Mini App-апгрейд завершён.
+
+---
+
+## Этап 31: Фаза 8.8 — SNI-роутер на :443 (постоянный URL, VPN цел)
+
+**Дата:** 2026-05-19
+
+**Контекст:** Пользователь хочет постоянный `https://ernstgku.beget.tech`
+без вреда VPN. Диагностика: один IPv4 (нет 2-го IP/IPv6); VPN —
+`vless`+`security:reality`, `dest`/`serverNames`=
+`www.googletagmanager.com`, host :443. Reality не поддерживает
+fallback на локальный веб-бэкенд, конфиг Amnezia править нельзя →
+единственный путь: **L4 SNI-роутер на :443**.
+
+⚠️ В выводе диагностики у пользователя засветился Reality `privateKey`
+(секрет VPN-сервера) — рекомендовано пересоздать ключи в Amnezia; в чат
+не сохраняю.
+
+**Сделано (ветка `phase/8.8-sni-router`, автономно):**
+`deploy/nginx-sni.conf` — `stream`+`ssl_preread`, SNI
+`ernstgku.beget.tech` → `127.0.0.1:8443` (Caddy), `default` →
+`127.0.0.1:8444` (xray). `deploy/Caddyfile` переведён на
+`https_port 8443` (ACME по :80). `DEPLOYMENT.md` §6 переписан под
+SNI-роутер: webapp → Caddy → перепубликация xray (commit-бэкап +
+recreate по `docker inspect`, конфиг/ключи xray не трогаем) → nginx →
+проверка → @BotFather → откат. Python не менялся → 225 тестов зелёные,
+ruff чист.
+
+**Статус:** PR #28 → merge → авто-деплой (nginx/caddy/xray ставятся
+вручную по runbook). Далее с пользователем: `docker inspect
+amnezia-xray` → генерирую точную безопасную команду пересоздания.
