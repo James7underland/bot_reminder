@@ -383,3 +383,36 @@ def test_steps_ownership_and_wrong_task(client):
     assert client.request(
         "DELETE", f"/api/tasks/{tid_b}/steps/{sid}", headers=hdr(42)
     ).status_code == 404
+
+
+# --- Фаза 8.6: поиск + сортировки ---
+
+def test_tasks_search(client):
+    client.post(
+        "/api/tasks", json={"description": "купить хлеб"}, headers=hdr()
+    )
+    client.post(
+        "/api/tasks", json={"description": "помыть машину"}, headers=hdr()
+    )
+    res = client.get("/api/tasks?search=хлеб", headers=hdr()).json()
+    assert [t["description"] for t in res] == ["купить хлеб"]
+    assert client.get("/api/tasks?search=ничего", headers=hdr()).json() == []
+
+
+def test_tasks_sort_important_first(client):
+    a = client.post(
+        "/api/tasks", json={"description": "A"}, headers=hdr()
+    ).json()["id"]
+    b = client.post(
+        "/api/tasks", json={"description": "B"}, headers=hdr()
+    ).json()["id"]
+    client.patch(
+        f"/api/tasks/{b}", json={"important": True}, headers=hdr()
+    )
+    ids = [
+        t["id"]
+        for t in client.get(
+            "/api/tasks?sort=important", headers=hdr()
+        ).json()
+    ]
+    assert ids == [b, a]

@@ -66,6 +66,16 @@
   <button id="addBtn">Добавить</button>
 </div>
 <div class="bar">
+  <input id="search" placeholder="🔎 Поиск…" autocomplete="off">
+  <select id="sortSel">
+    <option value="">сортировка</option>
+    <option value="important">важные</option>
+    <option value="due">по сроку</option>
+    <option value="alpha">алфавит</option>
+    <option value="created">по дате</option>
+  </select>
+</div>
+<div class="bar">
   <label style="color:var(--hint);font-size:13px">
     <input type="checkbox" id="showDone"> показывать выполненные
   </label>
@@ -119,11 +129,16 @@ function esc(s){ return String(s).replace(/[&<>"]/g,
 
 async function load(){
   let tasks;
-  if ($("#myDay").checked) {
+  const sq = $("#search").value.trim();
+  if (sq) {
+    tasks = await api("/tasks?search=" + encodeURIComponent(sq));
+  } else if ($("#myDay").checked) {
     tasks = await api("/myday");
   } else {
     let q = "?completed=" + ($("#showDone").checked ? "true" : "false");
     if (listId !== "all") q += "&list_id=" + listId;
+    const s = $("#sortSel").value;
+    if (s) q += "&sort=" + s;
     tasks = await api("/tasks" + q);
   }
   const ul = $("#list"); ul.innerHTML = "";
@@ -270,6 +285,12 @@ $("#newTask").addEventListener("keydown",
   e => { if (e.key === "Enter") addTask(); });
 $("#showDone").onchange = load;
 $("#myDay").onchange = load;
+$("#sortSel").onchange = load;
+let _searchT;
+$("#search").addEventListener("input", () => {
+  clearTimeout(_searchT);
+  _searchT = setTimeout(load, 350);
+});
 $("#listSel").onchange = e => { listId = e.target.value; load(); };
 $("#newList").onclick = async () => {
   const name = prompt("Название списка");
