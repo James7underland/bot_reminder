@@ -39,7 +39,10 @@ def init_db():
             important INTEGER NOT NULL DEFAULT 0,
             notes TEXT,
             myday_date TEXT,
-            remind_before INTEGER
+            remind_before INTEGER,
+            deadline TEXT,
+            reminder_at TEXT,
+            overdue_notified INTEGER NOT NULL DEFAULT 0
         )
     ''')
     cursor.execute('''
@@ -86,6 +89,21 @@ def init_db():
         cursor.execute("ALTER TABLE tasks ADD COLUMN myday_date TEXT")
     if "remind_before" not in columns:
         cursor.execute("ALTER TABLE tasks ADD COLUMN remind_before INTEGER")
+    # Фаза 7: разделяем «срок» (deadline) и «напоминание» (reminder_at).
+    if "reminder_at" not in columns:
+        cursor.execute("ALTER TABLE tasks ADD COLUMN reminder_at TEXT")
+        # Раньше due_date был триггером напоминания — сохраняем поведение.
+        cursor.execute(
+            "UPDATE tasks SET reminder_at = due_date "
+            "WHERE due_date IS NOT NULL"
+        )
+    if "deadline" not in columns:
+        cursor.execute("ALTER TABLE tasks ADD COLUMN deadline TEXT")
+    if "overdue_notified" not in columns:
+        cursor.execute(
+            "ALTER TABLE tasks ADD COLUMN overdue_notified "
+            "INTEGER NOT NULL DEFAULT 0"
+        )
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована.")
@@ -770,3 +788,102 @@ def set_timezone(user_id: int, timezone: str) -> bool:
     conn.close()
     logger.info("user=%s timezone=%s", user_id, timezone)
     return True
+
+
+# --- Срок (deadline) и напоминание (reminder_at) — Фаза 7 ---
+
+def set_deadline(task_id: int, deadline: str | None) -> bool:
+    """
+    Ставит/снимает срок задачи (UTC, `YYYY-MM-DD HH:MM:SS`).
+    Сбрасывает `overdue_notified` (новый срок → можно снова уведомить).
+    False, если задачи нет.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE tasks SET deadline = ?, overdue_notified = 0 WHERE id = ?",
+        (deadline, task_id),
+    )
+    rows_affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows_affected > 0:
+        logger.info("task=%s deadline=%s", task_id, deadline)
+        return True
+    logger.warning("set_deadline: task=%s not found", task_id)
+    return False
+
+
+def set_reminder_at(task_id: int, reminder_at: str | None) -> bool:
+    """
+    Ставит/снимает время напоминания (UTC, `YYYY-MM-DD HH:MM:SS`).
+    Сбрасывает `reminder_sent`. False, если задачи нет.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE tasks SET reminder_at = ?, reminder_sent = 0 WHERE id = ?",
+        (reminder_at, task_id),
+    )
+    rows_affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows_affected > 0:
+        logger.info("task=%s reminder_at=%s", task_id, reminder_at)
+        return True
+    logger.warning("set_reminder_at: task=%s not found", task_id)
+    return False
+
+
+def get_due_reminders(now: str) -> list[dict]:
+    """
+    Активные задачи, у которых наступило `reminder_at` и напоминание ещё
+    не отправлено. `now` — UTC `YYYY-MM-DD HH:MM:SS`.
+    """
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM tasks WHERE completed = 0 AND reminder_sent = 0 "
+        "AND reminder_at IS NOT NULL AND reminder_at <= ? "
+        "ORDER BY reminder_at",
+        (now,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_overdue_tasks(now: str) -> list[dict]:
+    """
+    Активные задачи, у которых срок прошёл и о просрочке ещё не
+    уведомляли. `now` — UTC `YYYY-MM-DD HH:MM:SS`.
+    """
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM tasks WHERE completed = 0 AND overdue_notified = 0 "
+        "AND deadline IS NOT NULL AND deadline < ? ORDER BY deadline",
+        (now,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def mark_overdue_notified(task_id: int) -> bool:
+    """Помечает, что об просрочке задачи уже уведомили. False, если нет."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE tasks SET overdue_notified = 1 WHERE id = ?", (task_id,)
+    )
+    rows_affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows_affected > 0:
+        logger.info("task=%s overdue_notified=1", task_id)
+        return True
+    logger.warning("mark_overdue_notified: task=%s not found", task_id)
+    return False
