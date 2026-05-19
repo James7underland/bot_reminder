@@ -40,7 +40,7 @@
   .panel{margin-top:10px;display:none;flex-direction:column;gap:8px}
   .panel.open{display:flex}
   .panel label{font-size:12px;color:var(--hint)}
-  .panel input{width:100%;padding:8px;border-radius:8px;
+  .panel input,.panel select{width:100%;padding:8px;border-radius:8px;
        border:1px solid var(--hint);background:var(--bg);color:var(--text)}
   .pbtns{display:flex;gap:8px;flex-wrap:wrap}
   .muted{color:var(--hint);text-align:center;padding:30px 16px}
@@ -59,6 +59,9 @@
 <div class="bar">
   <label style="color:var(--hint);font-size:13px">
     <input type="checkbox" id="showDone"> показывать выполненные
+  </label>
+  <label style="color:var(--hint);font-size:13px;margin-left:14px">
+    <input type="checkbox" id="myDay"> 🗓 Мой день
   </label>
 </div>
 <ul id="list"></ul>
@@ -106,9 +109,14 @@ function esc(s){ return String(s).replace(/[&<>"]/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 
 async function load(){
-  let q = "?completed=" + ($("#showDone").checked ? "true" : "false");
-  if (listId !== "all") q += "&list_id=" + listId;
-  const tasks = await api("/tasks" + q);
+  let tasks;
+  if ($("#myDay").checked) {
+    tasks = await api("/myday");
+  } else {
+    let q = "?completed=" + ($("#showDone").checked ? "true" : "false");
+    if (listId !== "all") q += "&list_id=" + listId;
+    tasks = await api("/tasks" + q);
+  }
   const ul = $("#list"); ul.innerHTML = "";
   $("#empty").hidden = tasks.length > 0;
   for (const t of tasks) ul.appendChild(row(t));
@@ -129,8 +137,19 @@ function row(t){
       <label>Описание<input class="f-desc" value="${esc(t.description)}"></label>
       <label>Срок<input type="datetime-local" class="f-dl"></label>
       <label>Напоминание<input type="datetime-local" class="f-rm"></label>
+      <label>Повтор
+        <select class="f-rec">
+          <option value="">нет</option>
+          <option value="daily">ежедневно</option>
+          <option value="weekly">еженедельно</option>
+          <option value="monthly">ежемесячно</option>
+          <option value="yearly">ежегодно</option>
+        </select>
+      </label>
       <div class="pbtns">
         <button data-act="save">Сохранить</button>
+        <button class="ghost" data-act="myday">${
+          t.myday_date ? 'Убрать из «Мой день»' : 'В «Мой день»'}</button>
         <button class="ghost" data-act="clr-dl">Убрать срок</button>
         <button class="ghost" data-act="clr-rm">Убрать напом.</button>
       </div>
@@ -139,9 +158,12 @@ function row(t){
   if (t.deadline) meta.push("срок " + fmt(t.deadline) +
       (t.overdue ? " (просрочено)" : ""));
   if (t.reminder_at) meta.push("напомню " + fmt(t.reminder_at));
+  if (t.recurrence) meta.push("повтор: " + t.recurrence);
+  if (t.myday_date) meta.push("в «Мой день»");
   $(".meta", li).textContent = meta.join(" · ");
   $(".f-dl", li).value = toInput(t.deadline);
   $(".f-rm", li).value = toInput(t.reminder_at);
+  $(".f-rec", li).value = t.recurrence || "";
 
   $(".ttl", li).onclick = () => $(".panel", li).classList.toggle("open");
   li.addEventListener("click", async (e) => {
@@ -156,11 +178,17 @@ function row(t){
         body: JSON.stringify({important: !t.important})});
       load();
     } else if (act === "save") {
+      const rec = $(".f-rec",li).value;
       await api(`/tasks/${t.id}`, {method:"PATCH", body: JSON.stringify({
         description: $(".f-desc",li).value,
         deadline: fmt($(".f-dl",li).value) || null,
         reminder_at: fmt($(".f-rm",li).value) || null,
+        ...(rec ? {recurrence: rec} : {clear_recurrence: true}),
       })});
+      load();
+    } else if (act === "myday") {
+      await api(`/tasks/${t.id}/myday`, {method:"POST",
+        body: JSON.stringify({on: !t.myday_date})});
       load();
     } else if (act === "clr-dl") {
       await api(`/tasks/${t.id}`, {method:"PATCH",
@@ -186,6 +214,7 @@ $("#addBtn").onclick = addTask;
 $("#newTask").addEventListener("keydown",
   e => { if (e.key === "Enter") addTask(); });
 $("#showDone").onchange = load;
+$("#myDay").onchange = load;
 $("#listSel").onchange = e => { listId = e.target.value; load(); };
 $("#newList").onclick = async () => {
   const name = prompt("Название списка");

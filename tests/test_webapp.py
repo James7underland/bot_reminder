@@ -253,3 +253,51 @@ def test_api_routes_take_priority_over_static(client):
     # mount "/" не должен перекрывать API: /api/* без авторизации = 401
     assert client.get("/api/tasks").status_code == 401
     assert client.get("/healthz").status_code == 200
+
+
+# --- Фаза 8.4: повторы + «Мой день» ---
+
+def test_patch_recurrence_set_invalid_clear(client):
+    tid = client.post(
+        "/api/tasks", json={"description": "r"}, headers=hdr()
+    ).json()["id"]
+    ok = client.patch(
+        f"/api/tasks/{tid}", json={"recurrence": "weekly"}, headers=hdr()
+    )
+    assert ok.json()["recurrence"] == "weekly"
+    bad = client.patch(
+        f"/api/tasks/{tid}", json={"recurrence": "hourly"}, headers=hdr()
+    )
+    assert bad.status_code == 422
+    cl = client.patch(
+        f"/api/tasks/{tid}", json={"clear_recurrence": True}, headers=hdr()
+    )
+    assert cl.json()["recurrence"] is None
+
+
+def test_myday_toggle_and_list(client):
+    assert client.get("/api/myday", headers=hdr()).json() == []
+    tid = client.post(
+        "/api/tasks", json={"description": "md"}, headers=hdr()
+    ).json()["id"]
+    on = client.post(
+        f"/api/tasks/{tid}/myday", json={"on": True}, headers=hdr()
+    )
+    assert on.json()["myday_date"]
+    ids = [t["id"] for t in client.get("/api/myday", headers=hdr()).json()]
+    assert ids == [tid]
+    off = client.post(
+        f"/api/tasks/{tid}/myday", json={"on": False}, headers=hdr()
+    )
+    assert off.json()["myday_date"] is None
+    assert client.get("/api/myday", headers=hdr()).json() == []
+
+
+def test_myday_toggle_ownership(client):
+    tid = client.post(
+        "/api/tasks", json={"description": "x"}, headers=hdr(42)
+    ).json()["id"]
+    r = client.post(
+        f"/api/tasks/{tid}/myday", json={"on": True}, headers=hdr(99)
+    )
+    assert r.status_code == 404

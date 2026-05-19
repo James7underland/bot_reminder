@@ -19,22 +19,27 @@ from pydantic import BaseModel
 
 import config
 from database import (
+    RECURRENCES,
     add_task,
+    add_to_myday,
     complete_task,
     create_list,
     get_lists,
+    get_myday,
     get_task,
     get_tasks,
     get_tasks_by_list,
     get_timezone,
     init_db,
     mark_task_undone,
+    remove_from_myday,
     set_deadline,
     set_important,
+    set_recurrence,
     set_reminder_at,
     update_task_description,
 )
-from tzutil import to_utc
+from tzutil import to_local, to_utc
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +102,11 @@ def _to_utc_or_none(value: str | None, user_id: int) -> str | None:
     return to_utc(v, get_timezone(user_id))
 
 
+def _today_local(user_id: int) -> str:
+    """Сегодняшняя дата в часовом поясе пользователя ('YYYY-MM-DD')."""
+    return to_local(_now_utc(), get_timezone(user_id))[:10]
+
+
 def _decorate(task: dict, now: str) -> dict:
     """Добавляет вычисляемый флаг `overdue` (срок прошёл, не выполнено)."""
     dl = task.get("deadline")
@@ -126,10 +136,16 @@ class TaskPatch(BaseModel):
     reminder_at: str | None = None
     clear_deadline: bool = False
     clear_reminder: bool = False
+    recurrence: str | None = None
+    clear_recurrence: bool = False
 
 
 class ListCreate(BaseModel):
     name: str
+
+
+class MyDayToggle(BaseModel):
+    on: bool = True
 
 
 @asynccontextmanager
@@ -212,6 +228,33 @@ async def api_patch_task(
         set_reminder_at(task_id, None)
     elif body.reminder_at:
         set_reminder_at(task_id, _to_utc_or_none(body.reminder_at, user_id))
+    if body.clear_recurrence:
+        set_recurrence(task_id, None)
+    elif body.recurrence is not None:
+        if body.recurrence not in RECURRENCES:
+            raise HTTPException(status_code=422, detail="bad recurrence")
+        set_recurrence(task_id, body.recurrence)
+    return _decorate(get_task(task_id), _now_utc())
+
+
+@app.get("/api/myday")
+async def api_myday(user_id: int = Depends(current_user_id)) -> list[dict]:
+    tasks = get_myday(user_id, _today_local(user_id))
+    now = _now_utc()
+    return [_decorate(t, now) for t in tasks]
+
+
+@app.post("/api/tasks/{task_id}/myday")
+async def api_toggle_myday(
+    task_id: int,
+    body: MyDayToggle,
+    user_id: int = Depends(current_user_id),
+) -> dict:
+    _require_own_task(user_id, task_id)
+    if body.on:
+        add_to_myday(task_id, _today_local(user_id))
+    else:
+        remove_from_myday(task_id)
     return _decorate(get_task(task_id), _now_utc())
 
 
