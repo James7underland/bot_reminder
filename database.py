@@ -52,6 +52,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             name TEXT NOT NULL,
+            color TEXT NOT NULL DEFAULT '#0088CC',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
@@ -113,6 +114,13 @@ def init_db():
         cursor.execute("ALTER TABLE tasks ADD COLUMN order_index INTEGER")
         cursor.execute(
             "UPDATE tasks SET order_index = id WHERE order_index IS NULL"
+        )
+    # Фаза 9.5: цвет списка (визуальная подсказка в Mini App).
+    list_columns = {row[1] for row in cursor.execute("PRAGMA table_info(lists)")}
+    if "color" not in list_columns:
+        cursor.execute(
+            "ALTER TABLE lists ADD COLUMN color TEXT NOT NULL "
+            "DEFAULT '#0088CC'"
         )
     conn.commit()
     conn.close()
@@ -365,6 +373,34 @@ def rename_list(list_id: int, name: str) -> bool:
         logger.info("list=%s renamed to '%s'", list_id, name)
         return True
     logger.warning("rename_list: list=%s not found", list_id)
+    return False
+
+
+_HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
+
+
+def is_valid_color(value: str | None) -> bool:
+    """`#RRGGBB` или None (None=сброс к дефолту через отдельную ветку)."""
+    return bool(value and _HEX_COLOR_RE.match(value))
+
+
+def set_list_color(list_id: int, color: str) -> bool:
+    """Задаёт цвет списка (#RRGGBB). False — если цвет невалидный или нет."""
+    if not is_valid_color(color):
+        logger.warning("set_list_color: bad color %r", color)
+        return False
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE lists SET color = ? WHERE id = ?", (color, list_id)
+    )
+    rows_affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows_affected > 0:
+        logger.info("list=%s color=%s", list_id, color)
+        return True
+    logger.warning("set_list_color: list=%s not found", list_id)
     return False
 
 
@@ -639,6 +675,28 @@ def add_step(task_id: int, description: str) -> int | None:
     conn.close()
     logger.info("task=%s add step=%s", task_id, step_id)
     return step_id
+
+
+def get_steps_counts(user_id: int) -> dict[int, dict[str, int]]:
+    """
+    Агрегат по подзадачам всех задач пользователя:
+    `{task_id: {"done": N, "total": M}}`. Один SQL-запрос (GROUP BY) —
+    чтобы избежать N+1 при отрисовке списка. Задачи без подзадач
+    в результат не попадают (Mini App просто не рисует «N/M»).
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT s.task_id, COUNT(*) AS total, "
+        "SUM(CASE WHEN s.completed = 1 THEN 1 ELSE 0 END) AS done "
+        "FROM steps s JOIN tasks t ON t.id = s.task_id "
+        "WHERE t.user_id = ? GROUP BY s.task_id",
+        (user_id,),
+    )
+    result = {row[0]: {"done": int(row[2] or 0), "total": int(row[1])}
+              for row in cursor.fetchall()}
+    conn.close()
+    return result
 
 
 def get_steps(task_id: int) -> list[dict]:

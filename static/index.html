@@ -67,9 +67,10 @@
 <header>Мои задачи</header>
 <div class="bar">
   <select id="listSel"></select>
-  <button id="newList" class="ghost">+</button>
-  <button id="renList" class="ghost">✎</button>
-  <button id="delList" class="ghost">🗑</button>
+  <button id="newList" class="ghost" title="Создать список">+</button>
+  <button id="renList" class="ghost" title="Переименовать">✎</button>
+  <button id="clrList" class="ghost" title="Цвет">🎨</button>
+  <button id="delList" class="ghost" title="Удалить">🗑</button>
   <button id="tzBtn" class="ghost">⚙</button>
 </div>
 <div class="bar">
@@ -136,7 +137,10 @@ async function loadLists(){
   sel.innerHTML =
     '<option value="all">Все задачи</option>' +
     '<option value="0">Без списка</option>' +
-    lists.map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join("");
+    lists.map(l => {
+      const c = l.color || "#0088CC";
+      return `<option value="${l.id}" style="color:${c}">● ${esc(l.name)}</option>`;
+    }).join("");
   sel.value = listId;
 }
 
@@ -253,6 +257,7 @@ function row(t){
   if (t.reminder_at) meta.push("напомню " + fmt(t.reminder_at));
   if (t.recurrence) meta.push("повтор: " + t.recurrence);
   if (t.myday_date) meta.push("в «Мой день»");
+  if (t.steps_total) meta.push("📋 " + t.steps_done + "/" + t.steps_total);
   $(".meta", li).textContent = meta.join(" · ");
   $(".f-dl", li).value = toInput(t.deadline);
   $(".f-rm", li).value = toInput(t.reminder_at);
@@ -440,6 +445,26 @@ $("#delList").onclick = async () => {
     listId = "all";
     await loadLists(); load();
   }
+};
+$("#clrList").onclick = async () => {
+  const id = curListId();
+  if (!id) { alert("Сначала выберите список в выпадающем меню"); return; }
+  const cur = (LISTS.find(l => String(l.id) === String(id)) || {}).color
+              || "#0088CC";
+  // Скрытый <input type="color"> — нативный пикер браузера, без prompt.
+  const inp = document.createElement("input");
+  inp.type = "color"; inp.value = cur;
+  inp.style.position = "absolute"; inp.style.opacity = "0";
+  document.body.appendChild(inp);
+  inp.addEventListener("change", async () => {
+    const color = inp.value;
+    document.body.removeChild(inp);
+    if (!color || color === cur) return;
+    await api(`/lists/${id}`, {method:"PATCH",
+      body: JSON.stringify({color: color})});
+    await loadLists(); load();
+  }, {once: true});
+  inp.click();
 };
 $("#tzBtn").onclick = async () => {
   const cur = (await api("/settings")).timezone;

@@ -446,7 +446,10 @@ def test_list_rename_delete_and_ownership(client):
     r = client.patch(
         f"/api/lists/{lid}", json={"name": "L2"}, headers=hdr(42)
     )
-    assert r.json() == {"id": lid, "name": "L2"}
+    # С Фазы 9.5 эндпоинт возвращает весь dict списка (с color и др.),
+    # поэтому проверяем только нужные поля.
+    body = r.json()
+    assert body["id"] == lid and body["name"] == "L2"
     assert [x["name"] for x in client.get(
         "/api/lists", headers=hdr(42)
     ).json()] == ["L2"]
@@ -746,4 +749,98 @@ def test_api_move_others_task_404(client):
     ).status_code == 404
     assert client.post(
         f"/api/tasks/{tid}/move-down", headers=hdr(99)
+    ).status_code == 404
+
+
+# --- Фаза 9.5: счётчик подзадач + цвет списка ---
+
+def test_db_get_steps_counts_aggregates_per_task():
+    """Один SQL — done/total для всех задач пользователя; без подзадач — нет."""
+    from database import add_step, add_task, get_steps_counts, mark_step_done
+    a = add_task(11, "a")
+    b = add_task(11, "b")
+    add_task(11, "c")               # без подзадач — отсутствует в результате
+    s1 = add_step(a, "a1")
+    add_step(a, "a2")
+    add_step(b, "b1")
+    mark_step_done(s1, True)
+    counts = get_steps_counts(11)
+    assert counts == {a: {"done": 1, "total": 2}, b: {"done": 0, "total": 1}}
+    # пользователь без подзадач — пустой dict
+    assert get_steps_counts(999) == {}
+
+
+def test_api_tasks_includes_steps_counts(client):
+    tid = client.post(
+        "/api/tasks", json={"description": "x"}, headers=hdr()
+    ).json()["id"]
+    client.post(
+        f"/api/tasks/{tid}/steps", json={"description": "s1"}, headers=hdr()
+    )
+    client.post(
+        f"/api/tasks/{tid}/steps", json={"description": "s2"}, headers=hdr()
+    )
+    t = next(t for t in client.get("/api/tasks", headers=hdr()).json()
+             if t["id"] == tid)
+    assert t["steps_total"] == 2 and t["steps_done"] == 0
+    # myday/planned/important тоже декорируют (если попадают)
+    client.post(
+        f"/api/tasks/{tid}/myday", json={"on": True}, headers=hdr()
+    )
+    t2 = next(t for t in client.get("/api/myday", headers=hdr()).json()
+              if t["id"] == tid)
+    assert t2["steps_total"] == 2
+
+
+def test_db_is_valid_color_and_set_list_color():
+    from database import (
+        create_list,
+        get_lists,
+        is_valid_color,
+        set_list_color,
+    )
+    assert is_valid_color("#FFAA00") is True
+    assert is_valid_color("#ffaa00") is True
+    assert is_valid_color("#fff") is False    # короткий
+    assert is_valid_color("red") is False
+    assert is_valid_color(None) is False
+    assert is_valid_color("") is False
+    lid = create_list(50, "L")
+    # дефолт — синий
+    assert get_lists(50)[0]["color"] == "#0088CC"
+    assert set_list_color(lid, "#10b981") is True
+    assert get_lists(50)[0]["color"] == "#10b981"
+    # невалидный
+    assert set_list_color(lid, "no") is False
+    assert get_lists(50)[0]["color"] == "#10b981"  # не изменился
+    # нет такого списка
+    assert set_list_color(999999, "#FFFFFF") is False
+
+
+def test_api_list_patch_color(client):
+    lid = client.post(
+        "/api/lists", json={"name": "L"}, headers=hdr()
+    ).json()["id"]
+    # цвет
+    r = client.patch(
+        f"/api/lists/{lid}", json={"color": "#FFAA00"}, headers=hdr()
+    )
+    assert r.status_code == 200 and r.json()["color"] == "#FFAA00"
+    # имя+цвет одной патчой
+    r2 = client.patch(
+        f"/api/lists/{lid}",
+        json={"name": "L2", "color": "#10B981"}, headers=hdr(),
+    )
+    assert r2.json()["name"] == "L2" and r2.json()["color"] == "#10B981"
+    # пустое тело
+    assert client.patch(
+        f"/api/lists/{lid}", json={}, headers=hdr()
+    ).status_code == 422
+    # битый цвет
+    assert client.patch(
+        f"/api/lists/{lid}", json={"color": "bad"}, headers=hdr()
+    ).status_code == 422
+    # чужой
+    assert client.patch(
+        f"/api/lists/{lid}", json={"color": "#000000"}, headers=hdr(99)
     ).status_code == 404
