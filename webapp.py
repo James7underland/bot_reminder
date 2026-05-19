@@ -12,6 +12,7 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from urllib.parse import parse_qsl
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.staticfiles import StaticFiles
@@ -23,8 +24,10 @@ from database import (
     add_step,
     add_task,
     add_to_myday,
+    assign_task_to_list,
     complete_task,
     create_list,
+    delete_list,
     delete_step,
     get_lists,
     get_myday,
@@ -37,12 +40,14 @@ from database import (
     mark_step_done,
     mark_task_undone,
     remove_from_myday,
+    rename_list,
     search_tasks,
     set_deadline,
     set_important,
     set_note,
     set_recurrence,
     set_reminder_at,
+    set_timezone,
     update_task_description,
 )
 from tzutil import to_local, to_utc
@@ -150,6 +155,18 @@ class TaskPatch(BaseModel):
 
 class ListCreate(BaseModel):
     name: str
+
+
+class ListPatch(BaseModel):
+    name: str
+
+
+class MoveList(BaseModel):
+    list_id: int | None = None
+
+
+class Settings(BaseModel):
+    timezone: str
 
 
 class MyDayToggle(BaseModel):
@@ -344,6 +361,67 @@ async def api_create_list(
     if not name:
         raise HTTPException(status_code=422, detail="empty name")
     return {"id": create_list(user_id, name), "name": name}
+
+
+def _require_own_list(user_id: int, list_id: int) -> None:
+    if list_id not in {lst["id"] for lst in get_lists(user_id)}:
+        raise HTTPException(status_code=404, detail="list not found")
+
+
+@app.patch("/api/lists/{list_id}")
+async def api_rename_list(
+    list_id: int,
+    body: ListPatch,
+    user_id: int = Depends(current_user_id),
+) -> dict:
+    _require_own_list(user_id, list_id)
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="empty name")
+    rename_list(list_id, name)
+    return {"id": list_id, "name": name}
+
+
+@app.delete("/api/lists/{list_id}")
+async def api_delete_list(
+    list_id: int, user_id: int = Depends(current_user_id)
+) -> dict:
+    _require_own_list(user_id, list_id)
+    return {"ok": delete_list(list_id)}
+
+
+@app.post("/api/tasks/{task_id}/list")
+async def api_move_task(
+    task_id: int,
+    body: MoveList,
+    user_id: int = Depends(current_user_id),
+) -> dict:
+    _require_own_task(user_id, task_id)
+    target = body.list_id or None
+    if target is not None:
+        _require_own_list(user_id, target)
+    assign_task_to_list(task_id, target)
+    return _decorate(get_task(task_id), _now_utc())
+
+
+@app.get("/api/settings")
+async def api_get_settings(
+    user_id: int = Depends(current_user_id),
+) -> dict:
+    return {"timezone": get_timezone(user_id)}
+
+
+@app.put("/api/settings")
+async def api_set_settings(
+    body: Settings, user_id: int = Depends(current_user_id)
+) -> dict:
+    tz = body.timezone.strip()
+    try:
+        ZoneInfo(tz)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise HTTPException(status_code=422, detail="bad timezone") from None
+    set_timezone(user_id, tz)
+    return {"timezone": tz}
 
 
 # Раздача фронтенда Mini App. Монтируется ПОСЛЕ API-маршрутов, чтобы

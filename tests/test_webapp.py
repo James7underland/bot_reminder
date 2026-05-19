@@ -416,3 +416,74 @@ def test_tasks_sort_important_first(client):
         ).json()
     ]
     assert ids == [b, a]
+
+
+# --- Фаза 8.7: списки (rename/delete/move) + часовой пояс ---
+
+def test_list_rename_delete_and_ownership(client):
+    lid = client.post(
+        "/api/lists", json={"name": "L"}, headers=hdr(42)
+    ).json()["id"]
+    r = client.patch(
+        f"/api/lists/{lid}", json={"name": "L2"}, headers=hdr(42)
+    )
+    assert r.json() == {"id": lid, "name": "L2"}
+    assert [x["name"] for x in client.get(
+        "/api/lists", headers=hdr(42)
+    ).json()] == ["L2"]
+    # пустое имя
+    assert client.patch(
+        f"/api/lists/{lid}", json={"name": " "}, headers=hdr(42)
+    ).status_code == 422
+    # чужой
+    assert client.patch(
+        f"/api/lists/{lid}", json={"name": "x"}, headers=hdr(99)
+    ).status_code == 404
+    assert client.request(
+        "DELETE", f"/api/lists/{lid}", headers=hdr(99)
+    ).status_code == 404
+    assert client.request(
+        "DELETE", f"/api/lists/{lid}", headers=hdr(42)
+    ).json() == {"ok": True}
+    assert client.get("/api/lists", headers=hdr(42)).json() == []
+
+
+def test_move_task_between_lists(client):
+    lid = client.post(
+        "/api/lists", json={"name": "Work"}, headers=hdr()
+    ).json()["id"]
+    tid = client.post(
+        "/api/tasks", json={"description": "t"}, headers=hdr()
+    ).json()["id"]
+    r = client.post(
+        f"/api/tasks/{tid}/list", json={"list_id": lid}, headers=hdr()
+    )
+    assert r.json()["list_id"] == lid
+    assert [t["id"] for t in client.get(
+        f"/api/tasks?list_id={lid}", headers=hdr()
+    ).json()] == [tid]
+    # обратно «без списка»
+    back = client.post(
+        f"/api/tasks/{tid}/list", json={"list_id": 0}, headers=hdr()
+    )
+    assert back.json()["list_id"] is None
+    # чужой список → 404
+    assert client.post(
+        f"/api/tasks/{tid}/list", json={"list_id": 999999}, headers=hdr()
+    ).status_code == 404
+
+
+def test_settings_timezone(client):
+    assert client.get("/api/settings", headers=hdr()).json() == {
+        "timezone": "UTC"
+    }
+    ok = client.put(
+        "/api/settings", json={"timezone": "Europe/Moscow"}, headers=hdr()
+    )
+    assert ok.json() == {"timezone": "Europe/Moscow"}
+    assert client.get("/api/settings", headers=hdr()).json()[
+        "timezone"
+    ] == "Europe/Moscow"
+    assert client.put(
+        "/api/settings", json={"timezone": "Mars/Olympus"}, headers=hdr()
+    ).status_code == 422
