@@ -33,7 +33,9 @@ jobs:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
         run: |
           mkdir -p ~/.ssh
-          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_deploy
+          # DEPLOY_SSH_KEY хранится в base64 (одна строка) — так перенос
+          # строк приватного ключа не ломается при передаче через секрет.
+          printf '%s' "$DEPLOY_SSH_KEY" | base64 -d > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
           ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
           ssh -i ~/.ssh/id_deploy "$DEPLOY_USER@$DEPLOY_HOST" '
