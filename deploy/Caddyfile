@@ -1,0 +1,10 @@
+# Caddy: HTTPS-фронт для Mini App.
+# Caddy сам получает и продлевает сертификат Let's Encrypt (нужны
+# открытые порты 80 и 443 на VPS и A-запись домена → IP сервера).
+# Установка: см. DEPLOYMENT.md §6.
+# Сменить домен — заменить строку ниже и `systemctl reload caddy`.
+
+ernstgku.beget.tech {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8080
+}

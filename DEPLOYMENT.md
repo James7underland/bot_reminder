@@ -88,30 +88,39 @@ sudo systemctl enable --now bot_webapp
 curl -s localhost:8080/healthz                     # {"ok":true}
 ```
 
-**6.2. Cloudflare Tunnel.** Установить cloudflared:
+**6.2. HTTPS через Caddy (выбранный путь).** Стабильный
+`https://ernstgku.beget.tech`, авто-сертификат Let's Encrypt.
+
+Предусловия:
+- A-запись `ernstgku.beget.tech` → IP VPS (в панели Beget).
+- На VPS открыты входящие **80 и 443** (firewall провайдера + сервера:
+  `ufw allow 80,443/tcp` если включён ufw).
+
+Установка Caddy (Ubuntu) и конфиг из репозитория:
 ```bash
-curl -L -o /usr/local/bin/cloudflared \
-  https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
-chmod +x /usr/local/bin/cloudflared
+apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+  | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+  | tee /etc/apt/sources.list.d/caddy-stable.list
+apt update && apt install -y caddy
+
+cp ~/bot_reminder/deploy/Caddyfile /etc/caddy/Caddyfile
+systemctl reload caddy
+sleep 3
+curl -sI https://ernstgku.beget.tech/healthz | head -1   # HTTP/2 200
 ```
-- *Быстрый старт (URL меняется при перезапуске):*
-  `cloudflared tunnel --url http://127.0.0.1:8080` — выдаст
-  `https://<rand>.trycloudflare.com`.
-- *Стабильный URL (рекомендуется):* в дашборде Cloudflare Zero Trust
-  → Networks → Tunnels → Create tunnel → Cloudflared; привязать
-  public hostname к `http://127.0.0.1:8080`; скопировать **Tunnel
-  token**, затем:
-  ```bash
-  cp deploy/cloudflared.service /etc/systemd/system/
-  echo 'TUNNEL_TOKEN=<токен>' > /etc/cloudflared.env
-  chmod 600 /etc/cloudflared.env
-  sudo systemctl daemon-reload && sudo systemctl enable --now cloudflared
-  ```
+Caddy сам получит сертификат при первом запросе (нужно, чтобы DNS уже
+указывал на сервер; первая выдача — до минуты).
+
+*Альтернатива (если домена/портов нет):* Cloudflare-туннель —
+`deploy/cloudflared.service` + быстрый
+`cloudflared tunnel --url http://127.0.0.1:8080`.
 
 **6.3. Регистрация Mini App в @BotFather:**
-- `/newapp` (или `/mybots` → бот → Bot Settings → Menu Button /
-  Configure Mini App) → указать URL туннеля (HTTPS).
-- Готово: в боте появится кнопка, открывающая интерфейс.
+- `/mybots` → бот → **Bot Settings → Menu Button** → задать URL
+  `https://ernstgku.beget.tech` (и/или `/newapp` → тот же URL).
+- В боте появится кнопка, открывающая интерфейс.
 
 **Авто-деплой:** `deploy.yml` после `git pull` рестартит и
 `bot_reminder`, и `bot_webapp` (best-effort: пока юнит не создан —

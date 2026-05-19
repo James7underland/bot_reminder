@@ -417,7 +417,7 @@ bot_reminder/
 - **8.2 ✅ (PR #21):** `static/index.html` — Mini App (Telegram WebApp JS, X-Init-Data, список active/done, чекбокс, звезда, datetime-local срок/напоминание, красная подсветка просрочки, списки/создание); FastAPI `StaticFiles` смонтирован после API (приоритет /api); 214 тестов.
   срока/напоминания, подсветка просроченных) + раздача статики FastAPI.
 - **8.3a ✅ (PR #22):** инфраструктура webapp: `deploy/bot_webapp.service` (uvicorn 127.0.0.1:8080), `deploy/cloudflared.service`, deploy.yml рестартит и webapp (best-effort), runbook §6 в DEPLOYMENT.md.
-- **8.3b (с пользователем):** на сервере поднять сервисы + cloudflared, зарегистрировать Mini App в @BotFather.
+- **8.3b (с пользователем):** Caddy на VPS → `https://ernstgku.beget.tech` (A-запись Beget→IP, порты 80/443, Let's Encrypt), регистрация Mini App в @BotFather. `deploy/Caddyfile` + runbook §6 — PR #23.
   @BotFather, запуск webapp на сервере (вместе с ботом) — пошагово с
   пользователем.
 - Тестовая дисциплина: логика — в Python под pytest; Mini App — тонкий
