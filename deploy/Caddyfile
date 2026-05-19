@@ -1,8 +1,14 @@
-# Caddy: HTTPS-фронт для Mini App.
-# Caddy сам получает и продлевает сертификат Let's Encrypt (нужны
-# открытые порты 80 и 443 на VPS и A-запись домена → IP сервера).
-# Установка: см. DEPLOYMENT.md §6.
-# Сменить домен — заменить строку ниже и `systemctl reload caddy`.
+# Caddy: HTTPS-фронт Mini App ЗА SNI-роутером nginx.
+# nginx держит :443 и по SNI отдаёт домен Mini App сюда, на :8443.
+# Поэтому Caddy слушает HTTPS на 8443 (https_port), а ACME-сертификат
+# Let's Encrypt берёт по HTTP-01 на :80 (порт свободен) — нужны
+# открытые 80/443 и A-запись домена → IP сервера.
+# Установка: см. DEPLOYMENT.md §6. Смена домена: строка ниже + здесь же
+# в nginx-sni.conf, затем reload обоих.
+
+{
+    https_port 8443
+}
 
 ernstgku.beget.tech {
     encode zstd gzip
