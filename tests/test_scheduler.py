@@ -5,7 +5,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import database
 import scheduler
-from database import add_task, get_due_tasks, mark_reminder_sent, mark_task_done
+from database import (
+    add_task,
+    get_due_reminders,
+    get_due_tasks,
+    get_overdue_tasks,
+    mark_reminder_sent,
+    mark_task_done,
+    set_deadline,
+    set_reminder_at,
+)
 from scheduler import check_and_send_reminders
 
 NOW = "2026-05-17 12:00:00"
@@ -38,8 +47,9 @@ def test_mark_reminder_sent_nonexistent_returns_false():
     assert mark_reminder_sent(999999) is False
 
 
-async def test_check_and_send_sends_and_is_idempotent():
-    add_task(42, "Позвонить врачу", PAST)
+async def test_check_and_send_reminder_and_idempotent():
+    t = add_task(42, "Позвонить врачу")
+    set_reminder_at(t, PAST)
     bot = AsyncMock()
 
     sent = await check_and_send_reminders(bot, now=NOW_DT)
@@ -52,27 +62,59 @@ async def test_check_and_send_sends_and_is_idempotent():
     bot.reset_mock()
     assert await check_and_send_reminders(bot, now=NOW_DT) == 0
     bot.send_message.assert_not_awaited()
-    assert get_due_tasks(NOW) == []
+    assert get_due_reminders(NOW) == []
 
 
-async def test_check_and_send_skips_future():
-    add_task(7, "later", FUTURE)
+async def test_check_and_send_skips_future_reminder():
+    t = add_task(7, "later")
+    set_reminder_at(t, FUTURE)
     bot = AsyncMock()
 
     assert await check_and_send_reminders(bot, now=NOW_DT) == 0
     bot.send_message.assert_not_awaited()
 
 
-async def test_check_and_send_failure_is_not_marked():
-    add_task(9, "task", PAST)
+async def test_check_and_send_reminder_failure_not_marked():
+    t = add_task(9, "task")
+    set_reminder_at(t, PAST)
     bot = AsyncMock()
     bot.send_message.side_effect = RuntimeError("telegram down")
 
     sent = await check_and_send_reminders(bot, now=NOW_DT)
 
     assert sent == 0
-    # не помечена → повтор на следующем тике
-    assert len(get_due_tasks(NOW)) == 1
+    assert len(get_due_reminders(NOW)) == 1  # не помечена → повтор
+
+
+async def test_check_and_send_overdue_and_idempotent():
+    t = add_task(5, "Сдать отчёт")
+    set_deadline(t, PAST)
+    bot = AsyncMock()
+
+    sent = await check_and_send_reminders(bot, now=NOW_DT)
+
+    assert sent == 1
+    bot.send_message.assert_awaited_once_with(
+        chat_id=5, text="Просрочено: Сдать отчёт"
+    )
+
+    bot.reset_mock()
+    assert await check_and_send_reminders(bot, now=NOW_DT) == 0
+    bot.send_message.assert_not_awaited()
+    assert get_overdue_tasks(NOW) == []
+
+
+async def test_check_and_send_reminder_and_overdue_together():
+    t = add_task(8, "Двойная")
+    set_reminder_at(t, PAST)
+    set_deadline(t, PAST)
+    bot = AsyncMock()
+
+    sent = await check_and_send_reminders(bot, now=NOW_DT)
+
+    assert sent == 2  # и напоминание, и просрочка
+    texts = {c.kwargs["text"] for c in bot.send_message.await_args_list}
+    assert texts == {"Напоминаю: Двойная", "Просрочено: Двойная"}
 
 
 def test_init_db_migrates_legacy_table(tmp_path):
