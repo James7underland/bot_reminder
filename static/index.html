@@ -40,8 +40,17 @@
   .panel{margin-top:10px;display:none;flex-direction:column;gap:8px}
   .panel.open{display:flex}
   .panel label{font-size:12px;color:var(--hint)}
-  .panel input,.panel select{width:100%;padding:8px;border-radius:8px;
-       border:1px solid var(--hint);background:var(--bg);color:var(--text)}
+  .panel input,.panel select,.panel textarea{width:100%;padding:8px;
+       border-radius:8px;border:1px solid var(--hint);
+       background:var(--bg);color:var(--text);font:inherit}
+  .panel textarea{min-height:54px;resize:vertical}
+  .steps .step{display:flex;align-items:center;gap:8px;margin:5px 0}
+  .schk{width:18px;height:18px;flex:none;border:2px solid var(--hint);
+       border-radius:4px}
+  .schk.done{background:var(--btn);border-color:var(--btn)}
+  .sdone{text-decoration:line-through;color:var(--hint)}
+  .sdel{margin-left:auto;color:var(--hint)}
+  .addstep{display:flex;gap:8px}
   .pbtns{display:flex;gap:8px;flex-wrap:wrap}
   .muted{color:var(--hint);text-align:center;padding:30px 16px}
 </style>
@@ -146,6 +155,12 @@ function row(t){
           <option value="yearly">ежегодно</option>
         </select>
       </label>
+      <label>Заметка<textarea class="f-notes">${esc(t.notes||"")}</textarea></label>
+      <div class="steps" data-loaded="0"></div>
+      <div class="addstep">
+        <input class="f-step" placeholder="Новая подзадача…">
+        <button class="ghost" data-act="addstep">+ шаг</button>
+      </div>
       <div class="pbtns">
         <button data-act="save">Сохранить</button>
         <button class="ghost" data-act="myday">${
@@ -165,7 +180,26 @@ function row(t){
   $(".f-rm", li).value = toInput(t.reminder_at);
   $(".f-rec", li).value = t.recurrence || "";
 
-  $(".ttl", li).onclick = () => $(".panel", li).classList.toggle("open");
+  async function refreshSteps(){
+    const box = $(".steps", li);
+    const steps = await api(`/tasks/${t.id}/steps`);
+    box.dataset.loaded = "1";
+    box.innerHTML = steps.map(s => `
+      <div class="step" data-sid="${s.id}">
+        <span class="schk ${s.completed?'done':''}" data-act="stoggle"
+              data-done="${s.completed?1:0}"></span>
+        <span class="${s.completed?'sdone':''}">${esc(s.description)}</span>
+        <button class="ghost sdel" data-act="sdel">✕</button>
+      </div>`).join("");
+  }
+
+  $(".ttl", li).onclick = () => {
+    const p = $(".panel", li);
+    p.classList.toggle("open");
+    if (p.classList.contains("open") &&
+        $(".steps", li).dataset.loaded === "0") refreshSteps();
+  };
+  li._refreshSteps = refreshSteps;
   li.addEventListener("click", async (e) => {
     const act = e.target.dataset.act;
     if (!act) return;
@@ -179,13 +213,34 @@ function row(t){
       load();
     } else if (act === "save") {
       const rec = $(".f-rec",li).value;
+      const notes = $(".f-notes",li).value;
       await api(`/tasks/${t.id}`, {method:"PATCH", body: JSON.stringify({
         description: $(".f-desc",li).value,
         deadline: fmt($(".f-dl",li).value) || null,
         reminder_at: fmt($(".f-rm",li).value) || null,
         ...(rec ? {recurrence: rec} : {clear_recurrence: true}),
+        ...(notes.trim() ? {notes: notes} : {clear_notes: true}),
       })});
       load();
+    } else if (act === "addstep") {
+      const inp = $(".f-step", li);
+      if (inp.value.trim()) {
+        await api(`/tasks/${t.id}/steps`, {method:"POST",
+          body: JSON.stringify({description: inp.value.trim()})});
+        inp.value = "";
+        li._refreshSteps();
+      }
+    } else if (act === "stoggle") {
+      const st = e.target.closest(".step");
+      await api(`/tasks/${t.id}/steps/${st.dataset.sid}/toggle`,
+        {method:"POST", body: JSON.stringify(
+          {done: e.target.dataset.done !== "1"})});
+      li._refreshSteps();
+    } else if (act === "sdel") {
+      const st = e.target.closest(".step");
+      await api(`/tasks/${t.id}/steps/${st.dataset.sid}`,
+        {method:"DELETE"});
+      li._refreshSteps();
     } else if (act === "myday") {
       await api(`/tasks/${t.id}/myday`, {method:"POST",
         body: JSON.stringify({on: !t.myday_date})});

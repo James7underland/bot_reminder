@@ -301,3 +301,85 @@ def test_myday_toggle_ownership(client):
         f"/api/tasks/{tid}/myday", json={"on": True}, headers=hdr(99)
     )
     assert r.status_code == 404
+
+
+# --- Фаза 8.5: подзадачи + заметки ---
+
+def test_notes_patch_set_and_clear(client):
+    tid = client.post(
+        "/api/tasks", json={"description": "n"}, headers=hdr()
+    ).json()["id"]
+    r = client.patch(
+        f"/api/tasks/{tid}", json={"notes": "позвонить"}, headers=hdr()
+    )
+    assert r.json()["notes"] == "позвонить"
+    r2 = client.patch(
+        f"/api/tasks/{tid}", json={"clear_notes": True}, headers=hdr()
+    )
+    assert r2.json()["notes"] is None
+
+
+def test_steps_crud(client):
+    tid = client.post(
+        "/api/tasks", json={"description": "p"}, headers=hdr()
+    ).json()["id"]
+    assert client.get(
+        f"/api/tasks/{tid}/steps", headers=hdr()
+    ).json() == []
+
+    s = client.post(
+        f"/api/tasks/{tid}/steps", json={"description": "шаг 1"},
+        headers=hdr(),
+    ).json()
+    assert s["description"] == "шаг 1" and s["completed"] is False
+    sid = s["id"]
+    got = client.get(f"/api/tasks/{tid}/steps", headers=hdr()).json()
+    assert [x["id"] for x in got] == [sid]
+
+    assert client.post(
+        f"/api/tasks/{tid}/steps", json={"description": " "}, headers=hdr()
+    ).status_code == 422
+
+    tg = client.post(
+        f"/api/tasks/{tid}/steps/{sid}/toggle",
+        json={"done": True}, headers=hdr(),
+    )
+    assert tg.json() == {"ok": True}
+    assert client.get(
+        f"/api/tasks/{tid}/steps", headers=hdr()
+    ).json()[0]["completed"] is True
+
+    d = client.request(
+        "DELETE", f"/api/tasks/{tid}/steps/{sid}", headers=hdr()
+    )
+    assert d.json() == {"ok": True}
+    assert client.get(f"/api/tasks/{tid}/steps", headers=hdr()).json() == []
+
+
+def test_steps_ownership_and_wrong_task(client):
+    tid_a = client.post(
+        "/api/tasks", json={"description": "A"}, headers=hdr(42)
+    ).json()["id"]
+    sid = client.post(
+        f"/api/tasks/{tid_a}/steps", json={"description": "s"},
+        headers=hdr(42),
+    ).json()["id"]
+    # чужой пользователь
+    assert client.get(
+        f"/api/tasks/{tid_a}/steps", headers=hdr(99)
+    ).status_code == 404
+    assert client.post(
+        f"/api/tasks/{tid_a}/steps", json={"description": "x"},
+        headers=hdr(99),
+    ).status_code == 404
+    # шаг не принадлежит другой задаче того же юзера
+    tid_b = client.post(
+        "/api/tasks", json={"description": "B"}, headers=hdr(42)
+    ).json()["id"]
+    assert client.post(
+        f"/api/tasks/{tid_b}/steps/{sid}/toggle",
+        json={"done": True}, headers=hdr(42),
+    ).status_code == 404
+    assert client.request(
+        "DELETE", f"/api/tasks/{tid_b}/steps/{sid}", headers=hdr(42)
+    ).status_code == 404
