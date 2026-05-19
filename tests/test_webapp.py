@@ -275,6 +275,25 @@ def test_patch_recurrence_set_invalid_clear(client):
     assert cl.json()["recurrence"] is None
 
 
+def test_patch_recurrence_custom(client):
+    tid = client.post(
+        "/api/tasks", json={"description": "r"}, headers=hdr()
+    ).json()["id"]
+    e = client.patch(
+        f"/api/tasks/{tid}", json={"recurrence": "every:3:d"}, headers=hdr()
+    )
+    assert e.json()["recurrence"] == "every:3:d"
+    w = client.patch(
+        f"/api/tasks/{tid}",
+        json={"recurrence": "weekdays:MO,WE,FR"}, headers=hdr(),
+    )
+    assert w.json()["recurrence"] == "weekdays:MO,WE,FR"
+    bad = client.patch(
+        f"/api/tasks/{tid}", json={"recurrence": "every:0:d"}, headers=hdr()
+    )
+    assert bad.status_code == 422
+
+
 def test_myday_toggle_and_list(client):
     assert client.get("/api/myday", headers=hdr()).json() == []
     tid = client.post(

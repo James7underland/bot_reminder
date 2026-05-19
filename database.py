@@ -3,6 +3,7 @@
 """
 import calendar
 import logging
+import re
 import sqlite3
 from datetime import datetime, timedelta
 
@@ -427,6 +428,36 @@ def _add_months(dt: datetime, months: int) -> datetime:
     return dt.replace(year=year, month=month, day=day)
 
 
+_WEEKDAYS = ("MO", "TU", "WE", "TH", "FR", "SA", "SU")
+_EVERY_RE = re.compile(r"^every:([1-9]\d*):([dwmy])$")
+_WEEKDAYS_RE = re.compile(r"^weekdays:([A-Z]{2}(?:,[A-Z]{2})*)$")
+
+
+def _parse_weekdays(spec: str) -> set[int]:
+    """`weekdays:MO,WE,FR` -> {0,2,4}. Бросает ValueError при мусоре."""
+    m = _WEEKDAYS_RE.match(spec)
+    if not m:
+        raise ValueError(f"bad weekdays: {spec!r}")
+    parts = m.group(1).split(",")
+    days = {_WEEKDAYS.index(p) for p in parts if p in _WEEKDAYS}
+    if len(days) != len(parts) or not days:
+        raise ValueError(f"bad weekdays: {spec!r}")
+    return days
+
+
+def is_valid_recurrence(value: str | None) -> bool:
+    """True для допустимых значений: None | пресеты | every:N:[dwmy] | weekdays:..."""
+    if value is None or value in RECURRENCES:
+        return True
+    if _EVERY_RE.match(value):
+        return True
+    try:
+        _parse_weekdays(value)
+        return True
+    except ValueError:
+        return False
+
+
 def next_occurrence(due_date: str, recurrence: str) -> str:
     """Следующая дата повторения. due_date — `YYYY-MM-DD HH:MM:SS`."""
     dt = datetime.strptime(due_date, "%Y-%m-%d %H:%M:%S")
@@ -438,6 +469,26 @@ def next_occurrence(due_date: str, recurrence: str) -> str:
         nxt = _add_months(dt, 1)
     elif recurrence == "yearly":
         nxt = _add_months(dt, 12)
+    elif (m := _EVERY_RE.match(recurrence)):
+        n, unit = int(m.group(1)), m.group(2)
+        if unit == "d":
+            nxt = dt + timedelta(days=n)
+        elif unit == "w":
+            nxt = dt + timedelta(weeks=n)
+        elif unit == "m":
+            nxt = _add_months(dt, n)
+        else:  # 'y'
+            nxt = _add_months(dt, 12 * n)
+    elif recurrence.startswith("weekdays:"):
+        days = _parse_weekdays(recurrence)
+        # Ищем ближайший день недели из набора (1..7 шагов вперёд)
+        for step in range(1, 8):
+            cand = dt + timedelta(days=step)
+            if cand.weekday() in days:
+                nxt = cand
+                break
+        else:  # pragma: no cover — defensive: набор всегда непуст
+            raise ValueError(f"no weekday match: {recurrence}")
     else:
         raise ValueError(f"unknown recurrence: {recurrence}")
     return nxt.strftime("%Y-%m-%d %H:%M:%S")
@@ -445,7 +496,7 @@ def next_occurrence(due_date: str, recurrence: str) -> str:
 
 def set_recurrence(task_id: int, recurrence: str | None) -> bool:
     """Задаёт повтор (None — снять). False при неверном значении/нет задачи."""
-    if recurrence is not None and recurrence not in RECURRENCES:
+    if not is_valid_recurrence(recurrence):
         logger.warning("set_recurrence: invalid value %r", recurrence)
         return False
     conn = get_connection()
@@ -486,7 +537,7 @@ def complete_task(task_id: int) -> dict | None:
     recurred = False
     next_due = None
     new_task_id = None
-    if row["recurrence"] in RECURRENCES and row["due_date"]:
+    if row["recurrence"] and is_valid_recurrence(row["recurrence"]) and row["due_date"]:
         next_due = next_occurrence(row["due_date"], row["recurrence"])
         cursor.execute(
             "INSERT INTO tasks (user_id, description, due_date, list_id, "
