@@ -37,6 +37,7 @@ from database import (
     mark_step_done,
     mark_task_undone,
     remove_from_myday,
+    search_tasks,
     set_deadline,
     set_important,
     set_note,
@@ -182,9 +183,13 @@ async def api_tasks(
     user_id: int = Depends(current_user_id),
     list_id: int | None = None,
     completed: bool = False,
+    search: str | None = None,
+    sort: str | None = None,
 ) -> list[dict]:
-    if list_id is None:
-        tasks = get_tasks(user_id, completed=completed)
+    if search and search.strip():
+        tasks = search_tasks(user_id, search)
+    elif list_id is None:
+        tasks = get_tasks(user_id, completed=completed, sort=sort)
     else:
         real = None if list_id == 0 else list_id
         tasks = get_tasks_by_list(user_id, real, completed=completed)
