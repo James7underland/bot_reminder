@@ -637,3 +637,35 @@ Mini App):
 **Статус:** PR #19 → merge → авто-деплой. Далее Фаза 8 — Telegram
 Mini App (FastAPI + initData-авторизация + фронтенд + Cloudflare
 Tunnel).
+
+---
+
+## Этап 23: Фаза 8.1 — HTTP API Mini App (FastAPI + initData)
+
+**Дата:** 2026-05-19
+
+**Описание:** Ветка `phase/8.1-webapp-api`. Добавлены зависимости
+`fastapi`/`uvicorn` (requirements.txt). Локально `pip` шёл через
+SOCKS-прокси пользователя (VPN) и падал без PySocks — обойдено
+`NO_PROXY=*` (CI/сервер ставят как обычно).
+
+`webapp.py`: `validate_init_data(init_data, token)` — чистая проверка
+подписи Telegram WebApp (secret=HMAC("WebAppData",token);
+hash=HMAC(secret,data_check_string); `compare_digest`); возвращает
+пользователя или None. Зависимость `current_user_id` (заголовок
+`X-Init-Data` → 401 при невалидном). REST: `GET/POST /api/tasks`,
+`/complete`, `/uncomplete`, `PATCH /api/tasks/{id}` (описание/важность/
+срок/напоминание, `clear_*`), `GET/POST /api/lists`, `/healthz`.
+Вычисляемый флаг `overdue` (срок прошёл, не выполнено). Проверка
+владения (`_require_own_task` → 404 на чужую задачу). Локальное
+время → UTC через `to_utc`+часовой пояс пользователя. Старт через
+`lifespan` (не deprecated `on_event`). `webapp` добавлен в coverage.
+
+**Результат:** 212 тестов зелёные (+21 `tests/test_webapp.py`:
+подпись/подделка/без user/невалидный JSON, авторизация, CRUD, overdue,
+владение, списки, фильтр); `webapp.py` 99% (1 защитная ветка),
+остальные модули 100%, TOTAL 99.74%; ruff чист.
+
+**Статус:** PR #20 → merge → авто-деплой (сервер доустановит fastapi).
+Бот по-прежнему работает; webapp пока не запускается на сервере — это
+8.3. Далее 8.2 (фронтенд).
