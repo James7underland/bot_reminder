@@ -563,3 +563,51 @@ def test_api_planned_and_important(client):
     # авторизация требуется
     assert client.get("/api/planned").status_code == 401
     assert client.get("/api/important").status_code == 401
+
+
+# --- Фаза 9.3: snooze ---
+
+def test_db_snooze_reminder_sets_future_and_resets_sent():
+    from datetime import UTC, datetime
+
+    from database import (
+        add_task,
+        get_task,
+        mark_reminder_sent,
+        set_reminder_at,
+        snooze_reminder,
+    )
+    tid = add_task(1, "t")
+    set_reminder_at(tid, "2020-01-01 00:00:00")
+    mark_reminder_sent(tid)
+    assert get_task(tid)["reminder_sent"] == 1
+
+    assert snooze_reminder(tid, 30) is True
+    now = datetime.now(UTC).replace(tzinfo=None)
+    new = datetime.strptime(get_task(tid)["reminder_at"], "%Y-%m-%d %H:%M:%S")
+    delta_min = (new - now).total_seconds() / 60
+    assert 29 <= delta_min <= 31  # +30 минут от текущего UTC
+    assert get_task(tid)["reminder_sent"] == 0   # сброшен
+
+    # некорректные параметры
+    assert snooze_reminder(tid, 0) is False
+    assert snooze_reminder(tid, -5) is False
+    assert snooze_reminder(999999, 10) is False
+
+
+def test_api_snooze(client):
+    tid = client.post(
+        "/api/tasks", json={"description": "x"}, headers=hdr()
+    ).json()["id"]
+    r = client.post(
+        f"/api/tasks/{tid}/snooze", json={"minutes": 15}, headers=hdr()
+    )
+    assert r.status_code == 200 and r.json()["reminder_at"]
+    bad = client.post(
+        f"/api/tasks/{tid}/snooze", json={"minutes": 0}, headers=hdr()
+    )
+    assert bad.status_code == 422
+    # чужая задача
+    assert client.post(
+        f"/api/tasks/{tid}/snooze", json={"minutes": 5}, headers=hdr(99)
+    ).status_code == 404

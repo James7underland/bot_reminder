@@ -50,6 +50,7 @@ from database import (
     set_recurrence,
     set_reminder_at,
     set_timezone,
+    snooze_reminder,
     update_task_description,
 )
 from tzutil import to_local, to_utc
@@ -181,6 +182,10 @@ class StepCreate(BaseModel):
 
 class StepToggle(BaseModel):
     done: bool = True
+
+
+class Snooze(BaseModel):
+    minutes: int
 
 
 @asynccontextmanager
@@ -361,6 +366,19 @@ async def api_toggle_myday(
         add_to_myday(task_id, _today_local(user_id))
     else:
         remove_from_myday(task_id)
+    return _decorate(get_task(task_id), _now_utc())
+
+
+@app.post("/api/tasks/{task_id}/snooze")
+async def api_snooze(
+    task_id: int,
+    body: Snooze,
+    user_id: int = Depends(current_user_id),
+) -> dict:
+    _require_own_task(user_id, task_id)
+    if body.minutes <= 0:
+        raise HTTPException(status_code=422, detail="minutes must be > 0")
+    snooze_reminder(task_id, body.minutes)
     return _decorate(get_task(task_id), _now_utc())
 
 

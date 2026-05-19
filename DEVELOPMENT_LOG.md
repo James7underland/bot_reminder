@@ -969,3 +969,32 @@ TOTAL 99.77%; ruff чист.
 **Статус:** PR #31 → merge → авто-деплой обновит Mini App (туннель/
 сертификат/VPN не трогаются). Далее 9.3 — snooze напоминания (+15 мин /
 +1 ч / завтра).
+
+---
+
+## Этап 35: Фаза 9.3 — snooze напоминаний
+
+**Дата:** 2026-05-20
+
+**Описание:** Ветка `phase/9.3-snooze`. БД: добавлена
+`snooze_reminder(task_id, minutes) -> bool` — сдвигает `reminder_at` к
+`now(UTC) + minutes` (а не к старому значению + minutes; это семантика
+«напомни ещё раз через…»), сбрасывает `reminder_sent`, возвращает `False`
+при `minutes<=0` или отсутствии задачи. Использован паттерн
+`datetime.now(UTC).replace(tzinfo=None)` (как в `scheduler.py`) — без
+`utcnow()`-DeprecationWarning. API: `POST /api/tasks/{id}/snooze` с
+Pydantic-моделью `Snooze {minutes:int}`; 422 при `minutes<=0`, 404 на
+чужую задачу, при успехе возвращает декорированную задачу. Фронтенд:
+под полем «Напомнить в …» добавлена строка «Отложить:» с тремя кнопками
+`+15 мин`, `+1 ч`, `до завтра 9:00`; последняя в JS считает разницу до
+завтрашнего 09:00 в локальной зоне и шлёт минуты в API.
+
+**Результат:** 249 тестов зелёные (+2: DB-уровень
+`test_db_snooze_reminder_sets_future_and_resets_sent` с ±1 мин допуском
++ ошибки при `minutes<=0`/несуществующем id; API
+`test_api_snooze` — 200 на валидный, 422 на `0`, 404 на чужую);
+`bot.py`/`database.py`/`scheduler.py`/`tzutil.py` 100%, `config.py` 80%,
+`webapp.py` 99%, TOTAL 99.77%; ruff чист.
+
+**Статус:** PR #32 → merge → авто-деплой. Далее 9.4 — ручная сортировка
+задач (`order_index`, drag/стрелки в Mini App).
