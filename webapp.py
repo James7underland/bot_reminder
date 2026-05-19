@@ -41,6 +41,8 @@ from database import (
     is_valid_recurrence,
     mark_step_done,
     mark_task_undone,
+    move_task_down,
+    move_task_up,
     remove_from_myday,
     rename_list,
     search_tasks,
@@ -380,6 +382,26 @@ async def api_snooze(
         raise HTTPException(status_code=422, detail="minutes must be > 0")
     snooze_reminder(task_id, body.minutes)
     return _decorate(get_task(task_id), _now_utc())
+
+
+@app.post("/api/tasks/{task_id}/move-up")
+async def api_move_up(
+    task_id: int, user_id: int = Depends(current_user_id)
+) -> dict:
+    """Меняет местами с предыдущим активным соседом того же списка."""
+    _require_own_task(user_id, task_id)
+    moved = move_task_up(task_id)
+    return {"moved": moved}
+
+
+@app.post("/api/tasks/{task_id}/move-down")
+async def api_move_down(
+    task_id: int, user_id: int = Depends(current_user_id)
+) -> dict:
+    """Меняет местами со следующим активным соседом того же списка."""
+    _require_own_task(user_id, task_id)
+    moved = move_task_down(task_id)
+    return {"moved": moved}
 
 
 @app.get("/api/lists")
