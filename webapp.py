@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from urllib.parse import parse_qsl
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import config
@@ -227,3 +228,8 @@ async def api_create_list(
     if not name:
         raise HTTPException(status_code=422, detail="empty name")
     return {"id": create_list(user_id, name), "name": name}
+
+
+# Раздача фронтенда Mini App. Монтируется ПОСЛЕ API-маршрутов, чтобы
+# /api/* и /healthz имели приоритет; "/" → static/index.html.
+app.mount("/", StaticFiles(directory="static", html=True), name="static")

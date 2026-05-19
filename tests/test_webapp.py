@@ -240,3 +240,16 @@ def test_patch_set_deadline_and_reminder(client):
         f"/api/tasks/{tid}", json={"clear_reminder": True}, headers=hdr()
     )
     assert r2.json()["reminder_at"] is None
+
+
+def test_frontend_index_served(client):
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "Мои задачи" in r.text
+    assert "telegram-web-app.js" in r.text
+
+
+def test_api_routes_take_priority_over_static(client):
+    # mount "/" не должен перекрывать API: /api/* без авторизации = 401
+    assert client.get("/api/tasks").status_code == 401
+    assert client.get("/healthz").status_code == 200

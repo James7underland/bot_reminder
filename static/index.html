@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Напоминалка</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root{
+    --bg:var(--tg-theme-bg-color,#fff);
+    --text:var(--tg-theme-text-color,#000);
+    --hint:var(--tg-theme-hint-color,#888);
+    --link:var(--tg-theme-link-color,#2481cc);
+    --btn:var(--tg-theme-button-color,#2481cc);
+    --btn-text:var(--tg-theme-button-text-color,#fff);
+    --sec:var(--tg-theme-secondary-bg-color,#f1f1f1);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:15px/1.4 -apple-system,system-ui,sans-serif;
+       background:var(--bg);color:var(--text)}
+  header{padding:14px 16px 6px;font-size:22px;font-weight:700}
+  .bar{display:flex;gap:8px;padding:8px 16px}
+  .bar input,.bar select{flex:1;min-width:0;padding:9px 10px;border-radius:10px;
+       border:1px solid var(--sec);background:var(--sec);color:var(--text)}
+  button{cursor:pointer;border:0;border-radius:10px;
+       background:var(--btn);color:var(--btn-text);padding:9px 14px;font-size:15px}
+  .ghost{background:transparent;color:var(--link);padding:6px}
+  ul{list-style:none;margin:0;padding:0 8px 24px}
+  li{background:var(--sec);margin:8px;border-radius:12px;padding:10px 12px}
+  .row{display:flex;align-items:flex-start;gap:10px}
+  .chk{width:22px;height:22px;flex:none;border:2px solid var(--hint);
+       border-radius:50%;margin-top:1px}
+  .chk.done{background:var(--btn);border-color:var(--btn)}
+  .ttl{flex:1;min-width:0;word-break:break-word}
+  .done .ttl{text-decoration:line-through;color:var(--hint)}
+  .meta{font-size:12px;color:var(--hint);margin-top:3px}
+  .overdue .meta,.overdue .ttl{color:#e53935}
+  .star{font-size:20px;color:var(--hint);flex:none;background:none;padding:0 2px}
+  .star.on{color:#f5b301}
+  .panel{margin-top:10px;display:none;flex-direction:column;gap:8px}
+  .panel.open{display:flex}
+  .panel label{font-size:12px;color:var(--hint)}
+  .panel input{width:100%;padding:8px;border-radius:8px;
+       border:1px solid var(--hint);background:var(--bg);color:var(--text)}
+  .pbtns{display:flex;gap:8px;flex-wrap:wrap}
+  .muted{color:var(--hint);text-align:center;padding:30px 16px}
+</style>
+</head>
+<body>
+<header>Мои задачи</header>
+<div class="bar">
+  <select id="listSel"></select>
+  <button id="newList" class="ghost">+ список</button>
+</div>
+<div class="bar">
+  <input id="newTask" placeholder="Новая задача…" autocomplete="off">
+  <button id="addBtn">Добавить</button>
+</div>
+<div class="bar">
+  <label style="color:var(--hint);font-size:13px">
+    <input type="checkbox" id="showDone"> показывать выполненные
+  </label>
+</div>
+<ul id="list"></ul>
+<div id="empty" class="muted" hidden>Пока нет задач</div>
+
+<script>
+const tg = window.Telegram ? window.Telegram.WebApp : null;
+if (tg) { tg.ready(); tg.expand(); }
+const INIT = tg ? tg.initData : "";
+
+async function api(path, opts={}) {
+  const r = await fetch("/api" + path, {
+    ...opts,
+    headers: {
+      "Content-Type": "application/json",
+      "X-Init-Data": INIT,
+      ...(opts.headers || {}),
+    },
+  });
+  if (r.status === 401) {
+    document.body.innerHTML =
+      '<div class="muted">Откройте приложение из Telegram.</div>';
+    throw new Error("unauthorized");
+  }
+  return r.status === 204 ? null : r.json();
+}
+
+const $ = (s, el=document) => el.querySelector(s);
+let listId = "all";
+
+function fmt(dt){ return dt ? dt.replace("T"," ").slice(0,16) : ""; }
+function toInput(s){ return s ? s.slice(0,16).replace(" ","T") : ""; }
+
+async function loadLists(){
+  const sel = $("#listSel");
+  const lists = await api("/lists");
+  sel.innerHTML =
+    '<option value="all">Все задачи</option>' +
+    '<option value="0">Без списка</option>' +
+    lists.map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join("");
+  sel.value = listId;
+}
+
+function esc(s){ return String(s).replace(/[&<>"]/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+async function load(){
+  let q = "?completed=" + ($("#showDone").checked ? "true" : "false");
+  if (listId !== "all") q += "&list_id=" + listId;
+  const tasks = await api("/tasks" + q);
+  const ul = $("#list"); ul.innerHTML = "";
+  $("#empty").hidden = tasks.length > 0;
+  for (const t of tasks) ul.appendChild(row(t));
+}
+
+function row(t){
+  const li = document.createElement("li");
+  if (t.overdue) li.classList.add("overdue");
+  if (t.completed) li.classList.add("done");
+  li.innerHTML = `
+    <div class="row">
+      <div class="chk ${t.completed?'done':''}" data-act="toggle"></div>
+      <div class="ttl">${esc(t.description)}
+        <div class="meta"></div></div>
+      <button class="star ${t.important?'on':''}" data-act="star">★</button>
+    </div>
+    <div class="panel">
+      <label>Описание<input class="f-desc" value="${esc(t.description)}"></label>
+      <label>Срок<input type="datetime-local" class="f-dl"></label>
+      <label>Напоминание<input type="datetime-local" class="f-rm"></label>
+      <div class="pbtns">
+        <button data-act="save">Сохранить</button>
+        <button class="ghost" data-act="clr-dl">Убрать срок</button>
+        <button class="ghost" data-act="clr-rm">Убрать напом.</button>
+      </div>
+    </div>`;
+  const meta = [];
+  if (t.deadline) meta.push("срок " + fmt(t.deadline) +
+      (t.overdue ? " (просрочено)" : ""));
+  if (t.reminder_at) meta.push("напомню " + fmt(t.reminder_at));
+  $(".meta", li).textContent = meta.join(" · ");
+  $(".f-dl", li).value = toInput(t.deadline);
+  $(".f-rm", li).value = toInput(t.reminder_at);
+
+  $(".ttl", li).onclick = () => $(".panel", li).classList.toggle("open");
+  li.addEventListener("click", async (e) => {
+    const act = e.target.dataset.act;
+    if (!act) return;
+    if (act === "toggle") {
+      await api(`/tasks/${t.id}/${t.completed?'uncomplete':'complete'}`,
+                {method:"POST"});
+      load();
+    } else if (act === "star") {
+      await api(`/tasks/${t.id}`, {method:"PATCH",
+        body: JSON.stringify({important: !t.important})});
+      load();
+    } else if (act === "save") {
+      await api(`/tasks/${t.id}`, {method:"PATCH", body: JSON.stringify({
+        description: $(".f-desc",li).value,
+        deadline: fmt($(".f-dl",li).value) || null,
+        reminder_at: fmt($(".f-rm",li).value) || null,
+      })});
+      load();
+    } else if (act === "clr-dl") {
+      await api(`/tasks/${t.id}`, {method:"PATCH",
+        body: JSON.stringify({clear_deadline:true})}); load();
+    } else if (act === "clr-rm") {
+      await api(`/tasks/${t.id}`, {method:"PATCH",
+        body: JSON.stringify({clear_reminder:true})}); load();
+    }
+  });
+  return li;
+}
+
+async function addTask(){
+  const inp = $("#newTask");
+  const d = inp.value.trim();
+  if (!d) return;
+  await api("/tasks", {method:"POST", body: JSON.stringify({description:d})});
+  inp.value = "";
+  load();
+}
+
+$("#addBtn").onclick = addTask;
+$("#newTask").addEventListener("keydown",
+  e => { if (e.key === "Enter") addTask(); });
+$("#showDone").onchange = load;
+$("#listSel").onchange = e => { listId = e.target.value; load(); };
+$("#newList").onclick = async () => {
+  const name = prompt("Название списка");
+  if (name && name.trim()) {
+    await api("/lists", {method:"POST",
+      body: JSON.stringify({name:name.trim()})});
+    await loadLists(); load();
+  }
+};
+
+(async () => {
+  try { await loadLists(); await load(); }
+  catch (e) { /* unauthorized уже показан */ }
+})();
+</script>
+</body>
+</html>

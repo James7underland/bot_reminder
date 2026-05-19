@@ -414,7 +414,7 @@ bot_reminder/
   (list/create/complete/uncomplete/patch, флаг `overdue`), списки;
   проверка владения задачей (404 на чужую); tz→UTC. 212 тестов,
   `webapp.py` 99%.
-- **8.2:** фронтенд Mini App (список, чекбоксы, важность, календарь
+- **8.2 ✅ (PR #21):** `static/index.html` — Mini App (Telegram WebApp JS, X-Init-Data, список active/done, чекбокс, звезда, datetime-local срок/напоминание, красная подсветка просрочки, списки/создание); FastAPI `StaticFiles` смонтирован после API (приоритет /api); 214 тестов.
   срока/напоминания, подсветка просроченных) + раздача статики FastAPI.
 - **8.3:** Cloudflare Tunnel (стабильный URL), регистрация Mini App в
   @BotFather, запуск webapp на сервере (вместе с ботом) — пошагово с
