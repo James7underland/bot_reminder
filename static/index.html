@@ -18,7 +18,16 @@
   *{box-sizing:border-box}
   body{margin:0;font:15px/1.4 -apple-system,system-ui,sans-serif;
        background:var(--bg);color:var(--text)}
-  header{padding:14px 16px 6px;font-size:22px;font-weight:700}
+  header{padding:14px 16px 6px;font-size:22px;font-weight:700;
+    display:flex;align-items:center;gap:12px}
+  header h1{flex:1;margin:0;font-size:inherit;font-weight:inherit}
+  .stats-badge{font-size:13px;font-weight:500;color:var(--hint);
+    background:var(--card);padding:6px 12px;border-radius:14px;
+    cursor:pointer;user-select:none;white-space:nowrap;
+    border:1px solid transparent;transition:border-color .15s}
+  .stats-badge:hover{border-color:var(--hint)}
+  .stats-badge .num{color:var(--text);font-weight:600}
+  .stats-badge .imp{color:#f5b301}
   .bar{display:flex;gap:8px;padding:8px 16px}
   .bar input,.bar select{flex:1;min-width:0;padding:9px 10px;border-radius:10px;
        border:1px solid var(--sec);background:var(--sec);color:var(--text)}
@@ -108,7 +117,10 @@
 </style>
 </head>
 <body>
-<header>Мои задачи</header>
+<header>
+  <h1>Мои задачи</h1>
+  <div id="statsBadge" class="stats-badge" hidden title="Статистика">…</div>
+</header>
 <div class="bar">
   <select id="listSel"></select>
   <button id="newList" class="ghost" title="Создать список">+</button>
@@ -337,7 +349,7 @@ async function api(path, opts={}) {
     });
   } catch (e) {
     // Сеть/CORS/DNS — на этом этапе response ещё не получили.
-    uiToast("Нет сети: " + (e && e.message || e));
+    if (!opts._silent) uiToast("Нет сети: " + (e && e.message || e));
     throw e;
   }
   if (r.status === 401) {
@@ -428,7 +440,44 @@ async function load(){
     !["myday","planned","important"].includes(view) &&
     !$("#sortSel").value;
   if (dragEnabled) attachDragDrop(ul);
+  refreshStats();
 }
+
+// Phase 10.8: маленький значок в шапке. Обновляется после load() и
+// после изменений, влияющих на счётчики. Не блокирует первый
+// рендер: load() показывает задачи синхронно, бэйдж подтягивается
+// следом.
+async function refreshStats(){
+  try {
+    const s = await api("/stats", {_silent: true});
+    const badge = $("#statsBadge");
+    let txt = `<span class="num">${s.active}</span> активн.`;
+    if (s.important) txt += ` · <span class="imp">★ ${s.important}</span>`;
+    if (s.steps_open) txt += ` · 📋 ${s.steps_open}`;
+    badge.innerHTML = txt;
+    badge._stats = s;
+    badge.hidden = false;
+  } catch { /* /stats недоступен — молча скрываем бэйдж */ }
+}
+
+$("#statsBadge").onclick = async () => {
+  const s = $("#statsBadge")._stats;
+  if (!s) return;
+  // Полное окно — обычный uiAlert (Telegram showAlert одноразмерный)
+  // или собственный модал? Сделаем простой текст через uiAlert,
+  // содержательный.
+  const fmtAge = s.oldest_open_at
+    ? new Date(s.oldest_open_at.replace(" ", "T") + "Z").toLocaleDateString()
+    : "—";
+  await uiAlert(
+    `Активных задач: ${s.active}\n`
+    + `Важных: ${s.important}\n`
+    + `Выполнено: ${s.completed}\n`
+    + `Списков: ${s.lists}\n`
+    + `Открытых подзадач: ${s.steps_open}\n`
+    + `Самая старая активная создана: ${fmtAge}`
+  );
+};
 
 function attachDragDrop(ul){
   // Pointer Events: единый код для мыши и тач-экранов. HTML5 native
