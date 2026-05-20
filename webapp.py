@@ -9,12 +9,14 @@ import hashlib
 import hmac
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from urllib.parse import parse_qsl
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -26,9 +28,11 @@ from database import (
     assign_task_to_list,
     complete_task,
     create_list,
+    db_ping,
     delete_list,
     delete_step,
     export_user_data,
+    get_global_counts,
     get_important_tasks,
     get_lists,
     get_myday,
@@ -39,6 +43,7 @@ from database import (
     get_tasks,
     get_tasks_by_list,
     get_timezone,
+    get_user_stats,
     import_user_data,
     init_db,
     is_valid_recurrence,
@@ -59,8 +64,10 @@ from database import (
     snooze_reminder,
     update_task_description,
 )
+from logsetup import setup_logging
 from tzutil import to_local, to_utc
 
+setup_logging("webapp")
 logger = logging.getLogger(__name__)
 
 _TIME_FMT = "%Y-%m-%d %H:%M:%S"
@@ -207,6 +214,9 @@ class Snooze(BaseModel):
     minutes: int
 
 
+_STARTED_AT = time.monotonic()
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):  # pragma: no cover
     init_db()
@@ -217,8 +227,27 @@ app = FastAPI(title="Reminder Mini App API", lifespan=_lifespan)
 
 
 @app.get("/healthz")
-async def healthz() -> dict:
-    return {"ok": True}
+async def healthz():
+    """
+    Расширенный healthcheck для внешнего мониторинга и `systemctl`:
+    - `ok`: True только если БД отвечает (SELECT 1) — иначе HTTP 503;
+    - `uptime_seconds`: с момента старта процесса (monotonic, не часы);
+    - сводные счётчики из `get_global_counts` — видно, что данные есть.
+    Эндпоинт без авторизации (initData не требуется) — чтобы
+    балансировщик/Caddy/systemd-таймер могли пинговать его извне.
+    """
+    db_ok = db_ping()
+    body: dict = {
+        "ok": bool(db_ok),
+        "db": "ok" if db_ok else "fail",
+        "uptime_seconds": round(time.monotonic() - _STARTED_AT, 1),
+    }
+    if db_ok:
+        try:
+            body.update(get_global_counts())
+        except Exception as e:   # очень редко, но всё-таки страхуемся
+            logger.warning("healthz counts failed: %s", e)
+    return JSONResponse(body, status_code=200 if db_ok else 503)
 
 
 @app.get("/api/tasks")
@@ -493,6 +522,14 @@ async def api_move_task(
         _require_own_list(user_id, target)
     assign_task_to_list(task_id, target)
     return _decorate(get_task(task_id), _now_utc())
+
+
+@app.get("/api/stats")
+async def api_stats(
+    user_id: int = Depends(current_user_id),
+) -> dict:
+    """Краткая сводка для текущего пользователя (Phase 10.3)."""
+    return get_user_stats(user_id)
 
 
 @app.get("/api/settings")

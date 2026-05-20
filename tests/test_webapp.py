@@ -83,8 +83,15 @@ def test_tasks_requires_auth(client):
     assert r.status_code == 401
 
 
-def test_healthz(client):
-    assert client.get("/healthz").json() == {"ok": True}
+def test_healthz_returns_db_ok_and_counts(client):
+    """С Фазы 10.3 /healthz пингует БД и отдаёт счётчики."""
+    body = client.get("/healthz").json()
+    assert body["ok"] is True
+    assert body["db"] == "ok"
+    assert "uptime_seconds" in body
+    # На свежей тестовой БД задач/списков нет, но ключи присутствуют.
+    for k in ("tasks_total", "tasks_active", "lists_total", "users"):
+        assert k in body
 
 
 # --- CRUD задач ---
@@ -1100,6 +1107,167 @@ def test_api_export_then_import(client):
         "/api/import", json={"payload": {"version": 999}}, headers=hdr(77)
     )
     assert bad.status_code == 422
+
+
+# --- Фаза 10.3: здоровье / статистика / логи ---
+
+def test_db_ping_ok():
+    from database import db_ping
+    assert db_ping() is True
+
+
+def test_db_ping_returns_false_on_error(monkeypatch):
+    """Если соединение бросает sqlite3.Error — db_ping ловит и → False."""
+    import sqlite3
+
+    import database
+    def bad():
+        raise sqlite3.OperationalError("simulated")
+    monkeypatch.setattr(database, "get_connection", bad)
+    assert database.db_ping() is False
+
+
+def test_db_get_global_counts():
+    from database import add_task, create_list, get_global_counts
+    create_list(300, "X")
+    add_task(300, "t1")
+    add_task(301, "t2")        # другой пользователь
+    counts = get_global_counts()
+    assert counts["tasks_total"] >= 2
+    assert counts["tasks_active"] >= 2
+    assert counts["lists_total"] >= 1
+    assert counts["users"] >= 2
+
+
+def test_db_get_user_stats():
+    from database import (
+        add_step,
+        add_task,
+        complete_task,
+        create_list,
+        get_user_stats,
+        set_important,
+    )
+    a = add_task(310, "a")
+    b = add_task(310, "b")
+    set_important(b, True)
+    create_list(310, "L")
+    add_step(a, "s1")
+    add_step(a, "s2")
+    complete_task(a)         # после complete: a выполнен, осталась b
+    s = get_user_stats(310)
+    # b — активна, a — выполнена; b важная.
+    assert s["active"] == 1
+    assert s["completed"] == 1
+    assert s["important"] == 1
+    assert s["lists"] == 1
+    # steps только у `a` (теперь выполненной задачи) — но steps связаны с
+    # задачей по task_id, без фильтра по completed; считаем только незакрытые.
+    assert s["steps_open"] == 2
+    assert s["oldest_open_at"] is not None
+
+
+def test_api_stats(client):
+    body = client.get("/api/stats", headers=hdr()).json()
+    for k in ("active", "completed", "lists", "important",
+              "steps_open", "oldest_open_at"):
+        assert k in body
+    # без авторизации — 401
+    assert client.get("/api/stats").status_code == 401
+
+
+def test_healthz_returns_503_when_db_down(client, monkeypatch):
+    """Если db_ping вернул False — endpoint отдаёт HTTP 503."""
+    import webapp
+    monkeypatch.setattr(webapp, "db_ping", lambda: False)
+    r = client.get("/healthz")
+    assert r.status_code == 503
+    body = r.json()
+    assert body["ok"] is False
+    assert body["db"] == "fail"
+
+
+def test_healthz_survives_counts_failure(client, monkeypatch, caplog):
+    """Если db_ping OK, но get_global_counts кинул — endpoint всё равно 200."""
+    import webapp
+
+    def boom():
+        raise RuntimeError("simulated counts crash")
+    monkeypatch.setattr(webapp, "get_global_counts", boom)
+    with caplog.at_level("WARNING"):
+        r = client.get("/healthz")
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+    assert any("healthz counts failed" in m for m in caplog.messages)
+
+
+def test_logsetup_idempotent_and_quiets_noisy(monkeypatch):
+    """
+    setup_logging при повторном вызове не дублирует хендлеры; шумные
+    логгеры подняты до WARNING (защита от утечки токена через httpx).
+    """
+    import logging as logging_mod
+
+    import logsetup
+    root = logging_mod.getLogger()
+    # Сбросим маркер и хендлеры, чтобы протестировать с нуля.
+    monkeypatch.setattr(root, "_bot_reminder_configured", False, raising=False)
+    saved = list(root.handlers)
+    root.handlers.clear()
+    try:
+        logsetup.setup_logging("test_app")
+        first = len(root.handlers)
+        logsetup.setup_logging("test_app")    # idempotency
+        assert len(root.handlers) == first
+        for name in ("httpx", "httpcore", "apscheduler", "telegram"):
+            assert logging_mod.getLogger(name).level == logging_mod.WARNING
+    finally:
+        root.handlers[:] = saved
+
+
+def test_logsetup_file_handler_when_log_dir_set(tmp_path, monkeypatch):
+    """С LOG_DIR=<tmp_path> добавляется RotatingFileHandler с правильным путём."""
+    import logging as logging_mod
+    import logging.handlers as lh
+
+    import logsetup
+    root = logging_mod.getLogger()
+    monkeypatch.setattr(root, "_bot_reminder_configured", False, raising=False)
+    saved = list(root.handlers)
+    root.handlers.clear()
+    monkeypatch.setenv("LOG_DIR", str(tmp_path))
+    try:
+        logsetup.setup_logging("phase103")
+        file_hs = [h for h in root.handlers
+                   if isinstance(h, lh.RotatingFileHandler)]
+        assert file_hs, "ожидался RotatingFileHandler"
+        # Файл создаётся при первой записи, но имя должно соответствовать.
+        assert "phase103.log" in file_hs[0].baseFilename
+    finally:
+        root.handlers[:] = saved
+
+
+def test_logsetup_file_handler_failure_is_soft(tmp_path, monkeypatch):
+    """Если LOG_DIR на запись недоступен — продолжаем без файла, не падаем."""
+    import logging as logging_mod
+
+    import logsetup
+    root = logging_mod.getLogger()
+    monkeypatch.setattr(root, "_bot_reminder_configured", False, raising=False)
+    saved = list(root.handlers)
+    root.handlers.clear()
+
+    def bad_mkdir(self, *a, **kw):
+        raise OSError("permission denied (simulated)")
+
+    monkeypatch.setattr("pathlib.Path.mkdir", bad_mkdir)
+    monkeypatch.setenv("LOG_DIR", str(tmp_path / "blocked"))
+    try:
+        logsetup.setup_logging("phase103")   # не должно падать
+        # stdout-хендлер всё равно должен быть добавлен.
+        assert root.handlers, "ожидался хотя бы один хендлер"
+    finally:
+        root.handlers[:] = saved
 
 
 def test_db_connection_uses_wal_and_busy_timeout():

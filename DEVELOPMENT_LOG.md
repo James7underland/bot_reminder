@@ -1183,3 +1183,59 @@ ruff чист.
 
 **Статус:** PR #36 → merge → авто-деплой. После — 10.3 (здоровье +
 ротация логов).
+
+---
+
+## Этап 40: Фаза 10.3 — здоровье и логирование
+
+**Дата:** 2026-05-20
+
+**Описание:** Ветка `phase/10.3-health-logs`. Три блока эксплуатации.
+
+**(а) Расширенный `/healthz`.** Теперь делает реальный пинг БД через
+`db_ping()` (одно соединение + `SELECT 1`, ловит `sqlite3.Error`).
+В ответе помимо `ok` поля `db`, `uptime_seconds` (с момента старта
+процесса, `time.monotonic`) и сводные счётчики `tasks_total`/
+`tasks_active`/`lists_total`/`users` из `get_global_counts()`. При
+неотвечающей БД эндпоинт возвращает **HTTP 503** — внешний монитор
+(systemd timer, Caddy upstream healthcheck и т.п.) сразу видит
+проблему. Если БД ОК, но счётчики сломались — 200 не падает, только
+warning в лог.
+
+**(б) `GET /api/stats`.** Per-user сводка
+(`active`/`completed`/`important`/`lists`/`steps_open`/
+`oldest_open_at`). Один проход через 6 коротких SELECT'ов. С
+initData-авторизацией. Готовая база для будущего виджета в Mini App.
+
+**(в) Унифицированные логи с ротацией.** Новый модуль `logsetup.py`
+с `setup_logging(name, level=INFO)`:
+- StreamHandler в stdout → попадает в systemd journal автоматически;
+- `RotatingFileHandler` 5×10 МБ при заданном env `LOG_DIR` (без env
+  файлового логирования нет — удобно для локальной разработки и
+  CI);
+- идемпотентность через маркер на root-логгере (gunicorn/uvicorn могут
+  переимпортировать модуль — не дублируем хендлеры);
+- глушение шумных сторонних логгеров (`httpx`/`httpcore`/`apscheduler`/
+  `telegram`) до WARNING. `httpx` пишет URL запроса к Telegram API с
+  токеном бота на INFO — критично не светить;
+- soft-fail на недоступном `LOG_DIR`: warning + продолжаем со
+  stdout-only, чтобы не валить процесс.
+
+`bot.py` и `webapp.py` перевешены на `setup_logging`. systemd-юниты
+`bot_reminder.service` / `bot_webapp.service` получают
+`Environment=LOG_DIR=...` и `ExecStartPre=/usr/bin/install -d` для
+гарантии существования каталога.
+
+**Результат:** 279 тестов зелёные (+10:
+`db_ping` happy/failure-path, `get_global_counts` агрегирует,
+`get_user_stats` (+`completed`, +`important`, +`steps_open`),
+`/api/stats` с авторизацией и 401, `/healthz` богатый формат, 503
+при отказе БД, 200 при отказе счётчиков с warning в лог,
+`setup_logging` idempotent + глушит noisy, добавляет
+RotatingFileHandler с правильным именем файла при `LOG_DIR`, мягко
+падает при отказе mkdir); `bot.py`/`scheduler.py`/`tzutil.py` 100%,
+`database.py`/`webapp.py` 99%, `config.py` 80%, TOTAL **99.75%**;
+ruff чист.
+
+**Статус:** PR #37 → merge → авто-деплой. После — выявленные пользователем
+проблемы эксплуатации закрыты. Следующие итерации — по обратной связи.

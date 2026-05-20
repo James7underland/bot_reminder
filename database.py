@@ -1167,6 +1167,104 @@ def move_task_down(task_id: int) -> bool:
     return _move_task(task_id, 1)
 
 
+# --- Здоровье / статистика (Фаза 10.3) ---
+
+def db_ping() -> bool:
+    """
+    Лёгкая проверка БД: открыть соединение и сделать `SELECT 1`.
+    True — БД отвечает. False — любая ошибка (соединения нет, лок
+    дольше busy_timeout, повреждение и т.д.). Используется `/healthz`
+    для внешнего мониторинга.
+    """
+    try:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            return cursor.fetchone()[0] == 1
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        logger.warning("db_ping failed: %s", e)
+        return False
+
+
+def get_global_counts() -> dict[str, int]:
+    """
+    Сводные счётчики по всей БД (не на пользователя): tasks_total,
+    tasks_active, lists_total, users. Используется `/healthz` для
+    подтверждения, что данные не утеряны после деплоя/рестарта.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM tasks")
+        tasks_total = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM tasks WHERE completed = 0")
+        tasks_active = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM lists")
+        lists_total = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(DISTINCT user_id) FROM tasks")
+        users = cursor.fetchone()[0]
+    finally:
+        conn.close()
+    return {
+        "tasks_total": tasks_total,
+        "tasks_active": tasks_active,
+        "lists_total": lists_total,
+        "users": users,
+    }
+
+
+def get_user_stats(user_id: int) -> dict:
+    """
+    Сводка по одному пользователю — для виджета в Mini App. Один проход
+    по БД (несколько коротких SELECT'ов, BUSY_TIMEOUT их обслужит).
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT COUNT(*) FROM tasks WHERE user_id = ? AND completed = 0",
+            (user_id,),
+        )
+        active = cursor.fetchone()[0]
+        cursor.execute(
+            "SELECT COUNT(*) FROM tasks WHERE user_id = ? AND completed = 1",
+            (user_id,),
+        )
+        completed = cursor.fetchone()[0]
+        cursor.execute(
+            "SELECT COUNT(*) FROM lists WHERE user_id = ?", (user_id,)
+        )
+        lists_n = cursor.fetchone()[0]
+        cursor.execute(
+            "SELECT COUNT(*) FROM tasks WHERE user_id = ? AND completed = 0 "
+            "AND important = 1", (user_id,),
+        )
+        important = cursor.fetchone()[0]
+        cursor.execute(
+            "SELECT COUNT(*) FROM steps s JOIN tasks t ON t.id = s.task_id "
+            "WHERE t.user_id = ? AND s.completed = 0", (user_id,),
+        )
+        steps_open = cursor.fetchone()[0]
+        cursor.execute(
+            "SELECT MIN(created_at) FROM tasks "
+            "WHERE user_id = ? AND completed = 0", (user_id,),
+        )
+        oldest = cursor.fetchone()[0]
+    finally:
+        conn.close()
+    return {
+        "active": active,
+        "completed": completed,
+        "lists": lists_n,
+        "important": important,
+        "steps_open": steps_open,
+        "oldest_open_at": oldest,
+    }
+
+
 # --- Экспорт / импорт (Фаза 10.2) ---
 
 EXPORT_VERSION = 1
