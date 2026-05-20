@@ -74,6 +74,18 @@
   .modal-btns{display:flex;gap:8px;justify-content:flex-end;
     margin-top:12px}
   .modal-btns button{padding:8px 14px}
+  .modal-list{max-width:420px}
+  .modal-search-wrap{margin-bottom:8px}
+  .modal-items{max-height:60vh;overflow-y:auto;
+    border:1px solid var(--hint);border-radius:8px;padding:4px 0}
+  .modal-group{font-size:12px;color:var(--hint);
+    padding:8px 12px 4px;font-weight:600;letter-spacing:.5px;
+    text-transform:uppercase}
+  .modal-item{padding:10px 12px;cursor:pointer;font-size:14px;
+    border-radius:6px;margin:0 4px}
+  .modal-item:hover{background:var(--card)}
+  .modal-item.sel{background:var(--btn);color:#fff}
+  .modal-item.sel:hover{background:var(--btn)}
   .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%)
     translateY(20px);background:#222;color:#fff;padding:10px 14px;
     border-radius:10px;font-size:14px;max-width:90vw;
@@ -187,6 +199,77 @@ function uiPrompt(title, defaultValue=""){
       tg.onEvent("backButtonClicked", off);
     }
     setTimeout(() => inp.focus(), 30);
+  });
+}
+
+function uiSelect(title, options, current=null) {
+  // options: [{value, label, group?}]. Группы рендерятся как заголовки.
+  // current — value текущего выбранного (подсвечивается).
+  // Resolves: chosen value | null on cancel.
+  return new Promise(resolve => {
+    const esc = s => String(s).replace(/[&<>"]/g,
+      c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+    const back = document.createElement("div");
+    back.className = "modal-back";
+    let body = "";
+    let lastGroup = null;
+    for (const o of options) {
+      if (o.group && o.group !== lastGroup) {
+        body += `<div class="modal-group">${esc(o.group)}</div>`;
+        lastGroup = o.group;
+      }
+      const sel = current != null && String(o.value) === String(current);
+      body += `<div class="modal-item${sel ? ' sel' : ''}" `
+            + `data-val="${esc(o.value)}">${esc(o.label)}</div>`;
+    }
+    back.innerHTML =
+      `<div class="modal modal-list">
+         <div class="modal-title">${esc(title)}</div>
+         <div class="modal-search-wrap">
+           <input class="modal-input modal-search" placeholder="🔎 Поиск…">
+         </div>
+         <div class="modal-items">${body}</div>
+         <div class="modal-btns">
+           <button class="ghost modal-cancel">Отмена</button>
+         </div>
+       </div>`;
+    document.body.appendChild(back);
+    const close = (val) => {
+      if (back.parentNode) back.parentNode.removeChild(back);
+      resolve(val);
+    };
+    back.querySelector(".modal-cancel").onclick = () => close(null);
+    back.querySelectorAll(".modal-item").forEach(el =>
+      el.onclick = () => close(el.dataset.val));
+    // Поиск: фильтрует по подстроке (case-insensitive).
+    const search = back.querySelector(".modal-search");
+    search.addEventListener("input", () => {
+      const q = search.value.trim().toLowerCase();
+      back.querySelectorAll(".modal-item").forEach(el => {
+        el.style.display =
+          (!q || el.textContent.toLowerCase().includes(q)) ? "" : "none";
+      });
+      // Скрываем заголовок группы, если все её элементы скрыты.
+      back.querySelectorAll(".modal-group").forEach(g => {
+        let next = g.nextElementSibling;
+        let any = false;
+        while (next && next.classList.contains("modal-item")) {
+          if (next.style.display !== "none") { any = true; break; }
+          next = next.nextElementSibling;
+        }
+        g.style.display = any ? "" : "none";
+      });
+    });
+    if (tg && tg.BackButton) {
+      tg.BackButton.show();
+      const off = () => {
+        tg.BackButton.hide();
+        tg.offEvent("backButtonClicked", off);
+        close(null);
+      };
+      tg.onEvent("backButtonClicked", off);
+    }
+    setTimeout(() => search.focus(), 30);
   });
 }
 
@@ -620,17 +703,23 @@ $("#clrList").onclick = async () => {
   inp.click();
 };
 $("#tzBtn").onclick = async () => {
+  // Phase 10.5: курируемый список + поиск, вместо ручного ввода IANA.
   const cur = (await api("/settings")).timezone;
-  const tz = await uiPrompt("Часовой пояс (IANA, напр. Europe/Moscow)", cur);
-  if (tz && tz.trim() && tz.trim() !== cur) {
-    const r = await fetch("/api/settings", {
-      method:"PUT",
-      headers:{"Content-Type":"application/json","X-Init-Data":INIT},
-      body: JSON.stringify({timezone: tz.trim()}),
-    });
-    if (r.status === 422) await uiAlert("Неверный часовой пояс");
-    else { await uiAlert("Часовой пояс сохранён"); load(); }
-  }
+  const zones = await api("/timezones");
+  const options = zones.map(z => ({
+    value: z.tz,
+    label: `(${z.offset}) ${z.label} — ${z.tz}`,
+    group: z.group,
+  }));
+  const picked = await uiSelect("Часовой пояс", options, cur);
+  if (!picked || picked === cur) return;
+  const r = await fetch("/api/settings", {
+    method:"PUT",
+    headers:{"Content-Type":"application/json","X-Init-Data":INIT},
+    body: JSON.stringify({timezone: picked}),
+  });
+  if (r.status === 422) await uiAlert("Неверный часовой пояс");
+  else { uiToast("Часовой пояс сохранён", "ok"); load(); }
 };
 
 // --- Экспорт / импорт (Фаза 10.2) ---
