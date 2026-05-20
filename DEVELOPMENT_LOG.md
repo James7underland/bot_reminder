@@ -1470,3 +1470,71 @@ fire-and-forget, не должен сыпать тостами «Нет сети
 **Статус:** PR #42 → merge → авто-деплой. Список запросов
 пользователя (часовые пояса, drag-and-drop, undo для удаления,
 виджет статистики) — **закрыт**. Дальше — по новой обратной связи.
+
+---
+
+## Этап 46: Фаза 11.1 — стрипнут чат-интерфейс (Mini-App-only)
+
+**Дата:** 2026-05-21
+
+**Описание:** Ветка `phase/11.1-strip-commands`. Запрос пользователя:
+«Команды бота больше не нужны — у нас же есть Mini App». До этого
+PR в `bot.py` было ~25 командных хендлеров (~810 строк); все они
+дублировали функциональность Mini App, требовали поддержки и тестов.
+Решение: убрать всё, оставить только запуск Mini App.
+
+**bot.py** ужат до ~140 строк:
+- `start(update, ctx)` — приветствие + persistent `ReplyKeyboardMarkup`
+  с одной WebApp-кнопкой «📋 Открыть список задач», ведущей на
+  `MINI_APP_URL` (новая env-переменная, дефолт `https://reminderr.ru/`).
+- `/help` — алиас `start`.
+- `fallback_text` — `MessageHandler(filters.ALL & ~filters.COMMAND)`:
+  любое не-командное сообщение (текст, голос, фото и т.п.) получает
+  ответ «Команды больше не нужны — всё в Mini App». Сообщения от
+  WebApp (`update.message.web_app_data`) намеренно игнорируются,
+  чтобы не отвечать на свои же шаги.
+- `error_handler` — теперь использует `logger.exception` (был
+  `logger.error` без stack-trace).
+- `main()` — регистрирует `/start`, `/help`, fallback, error_handler,
+  планировщик. Остальное не подключается.
+
+`quiet_third_party_loggers()` оставлена как ре-экспорт для обратной
+совместимости теста.
+
+**Удалённые хендлеры:** `/add`, `/list`, `/done`, `/undone`, `/edit`,
+`/reschedule`, `/lists`, `/newlist`, `/renamelist`, `/dellist`,
+`/movetask`, `/repeat`, `/important`, `/unimportant`, `/addstep`,
+`/steps`, `/stepdone`, `/stepundone`, `/delstep`, `/note`,
+`/delnote`, `/myday`, `/search`, `/deadline`, `/remind`, `/timezone`.
+Парсеры `parse_add_command`, `parse_datetime`, `_match_due`,
+`_set_when`, `_set_important`, `_set_step` тоже удалены.
+
+**Тесты.** Удалены 4 чисто-handler-файла: `test_handlers.py`,
+`test_parse.py`, `test_edit.py`, `test_deadline_cmd.py`. Из mixed-
+файлов (`test_lists.py`, `test_important.py`, `test_myday.py`,
+`test_recurring.py`, `test_steps_notes.py`, `test_search_reminders.py`,
+`test_timezones.py`) вырезаны секции с handler-тестами; DB-слой и
+миграции остались. Пользовательские сценарии (CRUD списков, задач,
+подзадач, часовых поясов, поиск, фильтры) уже покрываются
+`test_webapp.py` через initData-аутентифицированный HTTP API.
+
+Новые тесты в `test_hardening.py`: `start` отвечает с WebApp-кнопкой,
+`fallback_text` редиректит на Mini App, игнорирует `web_app_data`,
+оба обработчика гладко переживают `effective_message=None`
+(например, channel_post). + 2 теста на контракт `update_task_
+description`/`mark_task_undone` False-paths (раньше покрывались
+handler-тестами).
+
+**Конфиг.** В `config.py` новая `MINI_APP_URL` (env с дефолтом
+`https://reminderr.ru/`).
+
+**Результат:** 196 тестов зелёных (было 294 — минус ~98 handler-
+тестов); `bot.py` снова 100%, `scheduler.py`/`tzutil.py` 100%,
+`database.py`/`webapp.py` 99%, `config.py` 82%, TOTAL **99.30%**;
+ruff чист.
+
+**Статус:** PR #43 → merge → авто-деплой. После раскатки пользователь
+проверит: бот в чате должен отвечать только приветствием с кнопкой
+Mini App; написать что угодно текстом — получит подсказку открыть
+Mini App; напоминания продолжат приходить как раньше. Далее — 11.2
+(заметки).

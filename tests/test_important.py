@@ -1,28 +1,13 @@
-"""Фаза 5.4: тесты важных задач и сортировок."""
-import sqlite3
-from unittest.mock import AsyncMock, MagicMock, patch
+"""Фаза 5.4: тесты важных задач и сортировок (БД-слой).
 
-import bot
+С Phase 11.1 чат-команды убраны — тесты их хендлеров тоже.
+Пользовательские сценарии живут в `test_webapp.py`.
+"""
+import sqlite3
+from unittest.mock import patch
+
 import database
 from database import add_task, get_tasks, set_important
-
-
-def make_update(user_id=42):
-    update = MagicMock()
-    update.effective_user.id = user_id
-    update.message.reply_text = AsyncMock()
-    return update
-
-
-def make_context(args):
-    ctx = MagicMock()
-    ctx.args = args
-    return ctx
-
-
-def reply(update):
-    return update.message.reply_text.call_args.args[0]
-
 
 # --- слой БД ---
 
@@ -88,59 +73,3 @@ def test_init_db_migrates_important(tmp_path):
     assert "important" in cols
 
 
-# --- хендлеры ---
-
-async def test_important_no_args():
-    u = make_update()
-    await bot.important_command(u, make_context([]))
-    assert "/important" in reply(u)
-
-
-async def test_important_non_int():
-    u = make_update()
-    await bot.important_command(u, make_context(["abc"]))
-    assert "числом" in reply(u).lower()
-
-
-async def test_important_success():
-    u = make_update()
-    with patch.object(bot, "set_important", return_value=True) as m:
-        await bot.important_command(u, make_context(["5"]))
-    m.assert_called_once_with(5, True)
-    assert "важной" in reply(u).lower()
-
-
-async def test_important_not_found():
-    u = make_update()
-    with patch.object(bot, "set_important", return_value=False):
-        await bot.important_command(u, make_context(["5"]))
-    assert "не найдена" in reply(u).lower()
-
-
-async def test_unimportant_usage_and_success():
-    u = make_update()
-    await bot.unimportant_command(u, make_context([]))
-    assert "/unimportant" in reply(u)
-
-    u = make_update()
-    with patch.object(bot, "set_important", return_value=True) as m:
-        await bot.unimportant_command(u, make_context(["5"]))
-    m.assert_called_once_with(5, False)
-    assert "снята" in reply(u).lower()
-
-
-async def test_list_sort_keyword():
-    u = make_update()
-    tasks = [{"id": 1, "description": "A", "due_date": None}]
-    with patch.object(bot, "get_tasks", return_value=tasks) as m:
-        await bot.list_tasks(u, make_context(["important"]))
-    m.assert_called_once_with(42, sort="important")
-    assert "сортировка: important" in reply(u)
-
-
-async def test_list_marks_important():
-    u = make_update()
-    tasks = [{"id": 1, "description": "X", "due_date": None, "important": True}]
-    with patch.object(bot, "get_tasks", return_value=tasks):
-        await bot.list_tasks(u, make_context([]))
-    assert "[важно] X" in reply(u)

@@ -27,3 +27,8 @@ TIMEZONE = os.environ.get("TIMEZONE", "Europe/Moscow")
 
 # Интервал проверки напоминаний планировщиком, секунды.
 SCHEDULER_CHECK_INTERVAL = int(os.environ.get("SCHEDULER_CHECK_INTERVAL", "60"))
+
+# URL Mini App для кнопки в /start (Phase 11.1: команды убрали, остался
+# только запуск Mini App). Должен быть HTTPS, иначе Telegram не покажет
+# WebApp-кнопку.
+MINI_APP_URL = os.environ.get("MINI_APP_URL", "https://reminderr.ru/")

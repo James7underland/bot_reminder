@@ -571,3 +571,27 @@ snooze, ручной порядок, мелочи UI. Вне scope: файлов
   перевешены на `setup_logging`. systemd-юниты (`bot_reminder.service`,
   `bot_webapp.service`) получают `Environment=LOG_DIR=...` и
   `ExecStartPre` для создания каталога. 279 тестов.
+
+## Phase 11 — Mini-App-only бот + заметки
+
+Запрос пользователя: «Команды бота больше не нужны — у нас же есть
+Mini App» + «Нужно добавить раздел с заметками (отдельный раздел)».
+
+- **11.1 ✅ (PR #43):** Стрипнут весь чат-интерфейс. `bot.py` ужат
+  с ~810 строк до ~140 — оставлены только `start`/`help` (с WebApp-
+  кнопкой), `fallback_text` (любое не-командное сообщение → подсказка
+  открыть Mini App) и `error_handler`. Удалены ~25 командных хендлеров
+  (`/add`, `/list`, `/done`, `/edit`, `/deadline`, `/remind`,
+  `/reschedule`, `/lists`, `/newlist`, `/renamelist`, `/dellist`,
+  `/movetask`, `/repeat`, `/important`, `/unimportant`, `/addstep`,
+  `/steps`, `/stepdone`, `/stepundone`, `/delstep`, `/note`,
+  `/delnote`, `/myday`, `/search`, `/timezone`). Чистка тестов:
+  удалены 4 чисто-handler-файла (`test_handlers.py`, `test_parse.py`,
+  `test_edit.py`, `test_deadline_cmd.py`); из mixed-файлов
+  (`test_lists`, `test_important`, `test_myday`, `test_recurring`,
+  `test_steps_notes`, `test_search_reminders`, `test_timezones`)
+  вырезаны handler-тесты — DB-слой остаётся, пользовательские сценарии
+  живут в `test_webapp.py`. Планировщик (рассылка напоминаний и
+  purge soft-deleted) сохранён. 196 тестов, TOTAL 99.30%.
+- 11.2 Notes section (DB + API + Mini App view).
+

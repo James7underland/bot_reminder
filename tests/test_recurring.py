@@ -1,9 +1,9 @@
-"""Фаза 5.3: тесты повторяющихся задач."""
-from unittest.mock import AsyncMock, MagicMock, patch
+"""Фаза 5.3: тесты повторяющихся задач (БД-слой).
 
+С Phase 11.1 чат-команды убраны — тесты их хендлеров тоже.
+"""
 import pytest
 
-import bot
 from database import (
     add_task,
     complete_task,
@@ -12,24 +12,6 @@ from database import (
     next_occurrence,
     set_recurrence,
 )
-
-
-def make_update(user_id=42):
-    update = MagicMock()
-    update.effective_user.id = user_id
-    update.message.reply_text = AsyncMock()
-    return update
-
-
-def make_context(args):
-    ctx = MagicMock()
-    ctx.args = args
-    return ctx
-
-
-def reply(update):
-    return update.message.reply_text.call_args.args[0]
-
 
 # --- next_occurrence ---
 
@@ -118,65 +100,6 @@ def test_complete_task_recurring_without_due_does_not_spawn():
     res = complete_task(tid)
     assert res["recurred"] is False
     assert get_tasks(1) == []
-
-
-# --- /repeat ---
-
-async def test_repeat_usage():
-    u = make_update()
-    await bot.repeat_command(u, make_context(["7"]))
-    assert "Использование" in reply(u)
-
-
-async def test_repeat_non_int():
-    u = make_update()
-    await bot.repeat_command(u, make_context(["abc", "daily"]))
-    assert "числом" in reply(u).lower()
-
-
-async def test_repeat_invalid_value():
-    u = make_update()
-    await bot.repeat_command(u, make_context(["7", "hourly"]))
-    assert "допустимо" in reply(u).lower()
-
-
-async def test_repeat_off_clears():
-    u = make_update()
-    with patch.object(bot, "set_recurrence", return_value=True) as m:
-        await bot.repeat_command(u, make_context(["7", "off"]))
-    m.assert_called_once_with(7, None)
-    assert "отключён" in reply(u).lower()
-
-
-async def test_repeat_sets_value():
-    u = make_update()
-    with patch.object(bot, "set_recurrence", return_value=True) as m:
-        await bot.repeat_command(u, make_context(["7", "weekly"]))
-    m.assert_called_once_with(7, "weekly")
-    assert "weekly" in reply(u)
-
-
-async def test_repeat_not_found():
-    u = make_update()
-    with patch.object(bot, "set_recurrence", return_value=False):
-        await bot.repeat_command(u, make_context(["7", "daily"]))
-    assert "не найдена" in reply(u).lower()
-
-
-# --- /done с повтором ---
-
-async def test_done_recurring_message():
-    u = make_update()
-    res = {
-        "completed": True,
-        "recurred": True,
-        "next_due": "2026-05-18 09:00:00",
-        "new_task_id": 2,
-    }
-    with patch.object(bot, "complete_task", return_value=res):
-        await bot.done_task(u, make_context(["1"]))
-    out = reply(u)
-    assert "2026-05-18 09:00:00" in out and "повторение" in out.lower()
 
 
 # --- Фаза 9.1: custom recurrence ---

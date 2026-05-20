@@ -1,7 +1,7 @@
-"""Фаза 5.7: тесты поиска и гибких напоминаний."""
-from unittest.mock import AsyncMock, MagicMock, patch
+"""Фаза 5.7: тесты поиска и гибких напоминаний (БД-слой).
 
-import bot
+С Phase 11.1 чат-команды убраны.
+"""
 from database import (
     add_task,
     get_due_tasks,
@@ -11,24 +11,6 @@ from database import (
     set_note,
     set_remind_before,
 )
-
-
-def make_update(user_id=42):
-    update = MagicMock()
-    update.effective_user.id = user_id
-    update.message.reply_text = AsyncMock()
-    return update
-
-
-def make_context(args):
-    ctx = MagicMock()
-    ctx.args = args
-    return ctx
-
-
-def reply(update):
-    return update.message.reply_text.call_args.args[0]
-
 
 # --- search_tasks ---
 
@@ -88,22 +70,3 @@ def test_due_without_remind_before_unchanged():
     assert [x["id"] for x in get_due_tasks("2026-05-17 12:00:00")] == [t]
 
 
-# --- /search ---
-
-async def test_search_usage():
-    u = make_update()
-    await bot.search_command(u, make_context([]))
-    assert "Использование" in reply(u)
-
-
-async def test_search_found_and_not_found():
-    u = make_update()
-    tasks = [{"id": 1, "description": "Купить хлеб", "due_date": None}]
-    with patch.object(bot, "search_tasks", return_value=tasks):
-        await bot.search_command(u, make_context(["хлеб"]))
-    assert "Найдено" in reply(u) and "Купить хлеб" in reply(u)
-
-    u = make_update()
-    with patch.object(bot, "search_tasks", return_value=[]):
-        await bot.search_command(u, make_context(["zzz"]))
-    assert "ничего не найдено" in reply(u).lower()

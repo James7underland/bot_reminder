@@ -1,8 +1,11 @@
-"""Фаза 5.2: тесты списков/категорий (БД, хендлеры, миграция)."""
-import sqlite3
-from unittest.mock import AsyncMock, MagicMock, patch
+"""Фаза 5.2: тесты списков/категорий (БД, миграция).
 
-import bot
+С Phase 11.1 чат-команды убраны — соответствующие тесты тоже. Слой БД
+покрывается этим файлом; пользовательские сценарии — в `test_webapp.py`.
+"""
+import sqlite3
+from unittest.mock import patch
+
 import database
 from database import (
     add_task,
@@ -14,24 +17,6 @@ from database import (
     mark_task_done,
     rename_list,
 )
-
-
-def make_update(user_id=42):
-    update = MagicMock()
-    update.effective_user.id = user_id
-    update.message.reply_text = AsyncMock()
-    return update
-
-
-def make_context(args):
-    ctx = MagicMock()
-    ctx.args = args
-    return ctx
-
-
-def reply(update):
-    return update.message.reply_text.call_args.args[0]
-
 
 # --- слой БД ---
 
@@ -105,146 +90,6 @@ def test_assign_task_to_none_removes_from_list():
     assign_task_to_list(tid, lid)
     assert assign_task_to_list(tid, None) is True
     assert [t["id"] for t in get_tasks_by_list(1, None)] == [tid]
-
-
-# --- хендлеры списков ---
-
-async def test_lists_empty():
-    u = make_update()
-    with patch.object(bot, "get_lists", return_value=[]):
-        await bot.lists_command(u, make_context([]))
-    assert "нет списков" in reply(u).lower()
-
-
-async def test_lists_shows_items():
-    u = make_update()
-    with patch.object(bot, "get_lists", return_value=[{"id": 3, "name": "Дом"}]):
-        await bot.lists_command(u, make_context([]))
-    assert "Дом" in reply(u) and "3" in reply(u)
-
-
-async def test_newlist_no_args():
-    u = make_update()
-    await bot.newlist_command(u, make_context([]))
-    assert "Использование" in reply(u)
-
-
-async def test_newlist_success():
-    u = make_update()
-    with patch.object(bot, "create_list", return_value=9) as m:
-        await bot.newlist_command(u, make_context(["Мой", "список"]))
-    m.assert_called_once_with(42, "Мой список")
-    assert "создан" in reply(u).lower()
-
-
-async def test_renamelist_validation_and_success():
-    u = make_update()
-    await bot.renamelist_command(u, make_context(["7"]))
-    assert "Использование" in reply(u)
-
-    u = make_update()
-    await bot.renamelist_command(u, make_context(["abc", "n"]))
-    assert "числом" in reply(u).lower()
-
-    u = make_update()
-    await bot.renamelist_command(u, make_context(["7", ""]))
-    assert "имя" in reply(u).lower()
-
-    u = make_update()
-    with patch.object(bot, "rename_list", return_value=True):
-        await bot.renamelist_command(u, make_context(["7", "Новое"]))
-    assert "переименован" in reply(u).lower()
-
-    u = make_update()
-    with patch.object(bot, "rename_list", return_value=False):
-        await bot.renamelist_command(u, make_context(["7", "Новое"]))
-    assert "не найден" in reply(u).lower()
-
-
-async def test_dellist_validation_and_success():
-    u = make_update()
-    await bot.dellist_command(u, make_context([]))
-    assert "Использование" in reply(u)
-
-    u = make_update()
-    await bot.dellist_command(u, make_context(["abc"]))
-    assert "числом" in reply(u).lower()
-
-    u = make_update()
-    with patch.object(bot, "delete_list", return_value=True):
-        await bot.dellist_command(u, make_context(["7"]))
-    assert "удалён" in reply(u).lower()
-
-    u = make_update()
-    with patch.object(bot, "delete_list", return_value=False):
-        await bot.dellist_command(u, make_context(["7"]))
-    assert "не найден" in reply(u).lower()
-
-
-async def test_movetask_validation():
-    u = make_update()
-    await bot.movetask_command(u, make_context(["7"]))
-    assert "Использование" in reply(u)
-
-    u = make_update()
-    await bot.movetask_command(u, make_context(["abc", "1"]))
-    assert "числами" in reply(u).lower()
-
-
-async def test_movetask_list_not_found():
-    u = make_update()
-    with patch.object(bot, "get_lists", return_value=[]):
-        await bot.movetask_command(u, make_context(["7", "9"]))
-    assert "Список №9 не найден" in reply(u)
-
-
-async def test_movetask_success_to_list():
-    u = make_update()
-    with patch.object(bot, "get_lists", return_value=[{"id": 3, "name": "X"}]), \
-         patch.object(bot, "assign_task_to_list", return_value=True) as m:
-        await bot.movetask_command(u, make_context(["7", "3"]))
-    m.assert_called_once_with(7, 3)
-    assert "в список №3" in reply(u)
-
-
-async def test_movetask_success_to_no_list():
-    u = make_update()
-    with patch.object(bot, "assign_task_to_list", return_value=True) as m:
-        await bot.movetask_command(u, make_context(["7", "0"]))
-    m.assert_called_once_with(7, None)
-    assert "без списка" in reply(u).lower()
-
-
-async def test_movetask_task_not_found():
-    u = make_update()
-    with patch.object(bot, "assign_task_to_list", return_value=False):
-        await bot.movetask_command(u, make_context(["7", "0"]))
-    assert "Задача №7 не найдена" in reply(u)
-
-
-# --- /list с фильтром по списку ---
-
-async def test_list_filter_bad_id():
-    u = make_update()
-    await bot.list_tasks(u, make_context(["abc"]))
-    assert "ID списка" in reply(u)
-
-
-async def test_list_filter_by_list_id():
-    u = make_update()
-    tasks = [{"id": 1, "description": "A", "due_date": None}]
-    with patch.object(bot, "get_tasks_by_list", return_value=tasks) as m:
-        await bot.list_tasks(u, make_context(["3"]))
-    m.assert_called_once_with(42, 3)
-    assert "списка №3" in reply(u)
-
-
-async def test_list_filter_no_list():
-    u = make_update()
-    with patch.object(bot, "get_tasks_by_list", return_value=[]) as m:
-        await bot.list_tasks(u, make_context(["0"]))
-    m.assert_called_once_with(42, None)
-    assert "нет активных" in reply(u).lower()
 
 
 # --- миграция legacy-БД ---
