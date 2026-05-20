@@ -39,6 +39,12 @@
   .star.on{color:#f5b301}
   .mv{flex:none;background:none;color:var(--hint);font-size:12px;
       padding:0 4px;line-height:1}
+  .drag-handle{flex:none;color:var(--hint);font-size:16px;cursor:grab;
+      padding:0 4px;line-height:1;user-select:none;touch-action:none}
+  .drag-handle:active{cursor:grabbing}
+  li.dragging{opacity:.55}
+  li.drop-above{box-shadow:inset 0 3px 0 var(--btn)}
+  li.drop-below{box-shadow:inset 0 -3px 0 var(--btn)}
   .panel{margin-top:10px;display:none;flex-direction:column;gap:8px}
   .panel.open{display:flex}
   .panel label{font-size:12px;color:var(--hint)}
@@ -383,14 +389,105 @@ async function load(){
   const ul = $("#list"); ul.innerHTML = "";
   $("#empty").hidden = tasks.length > 0;
   for (const t of tasks) ul.appendChild(row(t));
+  // Drag-and-drop включаем только в режимах, где порядок реально
+  // соответствует order_index — это «Все» (без поиска) и «по списку».
+  // В smart-views (myday/planned/important) и при поиске список
+  // отсортирован по другим критериям, drag сбил бы порядок.
+  const dragEnabled = !sq &&
+    !["myday","planned","important"].includes(view) &&
+    !$("#sortSel").value;
+  if (dragEnabled) attachDragDrop(ul);
+}
+
+function attachDragDrop(ul){
+  // Pointer Events: единый код для мыши и тач-экранов. HTML5 native
+  // draggable плохо работает на мобиле, поэтому собираем вручную.
+  // Логика: на pointerdown по .drag-handle захватываем pointer-capture,
+  // на move — отмечаем, над какой li мы (выше/ниже середины), на up —
+  // POST /reorder с `after` = id предыдущей li (или null если перед
+  // первой).
+  ul.querySelectorAll(".drag-handle").forEach(handle => {
+    handle.addEventListener("pointerdown", ev => {
+      ev.preventDefault();
+      const li = handle.closest("li");
+      if (!li) return;
+      handle.setPointerCapture(ev.pointerId);
+      li.classList.add("dragging");
+      let target = null;     // li, над которой мы сейчас
+      let pos = null;        // "above" | "below"
+
+      const clearMarks = () => {
+        ul.querySelectorAll("li.drop-above,li.drop-below").forEach(el => {
+          el.classList.remove("drop-above","drop-below");
+        });
+      };
+
+      const onMove = (e) => {
+        const el = document.elementFromPoint(e.clientX, e.clientY);
+        const hover = el && el.closest && el.closest("li");
+        if (!hover || hover === li || hover.parentNode !== ul) {
+          clearMarks();
+          target = null;
+          return;
+        }
+        const r = hover.getBoundingClientRect();
+        const above = (e.clientY - r.top) < r.height / 2;
+        clearMarks();
+        hover.classList.add(above ? "drop-above" : "drop-below");
+        target = hover;
+        pos = above ? "above" : "below";
+      };
+
+      const onUp = async () => {
+        handle.removeEventListener("pointermove", onMove);
+        handle.removeEventListener("pointerup", onUp);
+        handle.removeEventListener("pointercancel", onUp);
+        clearMarks();
+        li.classList.remove("dragging");
+        if (!target) return;
+        // after_id — id предыдущей li относительно нового положения.
+        let afterId = null;
+        if (pos === "above") {
+          // вставка перед target: после предыдущей сестры target
+          const prev = target.previousElementSibling;
+          // если предыдущая — сама `li` (мы перетаскиваем её), то
+          // позиция «перед target» эквивалентна текущей.
+          if (prev && prev !== li) afterId = parseInt(prev.dataset.id, 10);
+          else if (prev === li) {
+            // уже на нужной позиции — не дёргаем сервер
+            return;
+          }
+          else afterId = null;
+        } else {
+          afterId = parseInt(target.dataset.id, 10);
+        }
+        // Оптимистично: переставляем DOM локально, затем дёргаем API.
+        if (pos === "above") ul.insertBefore(li, target);
+        else target.parentNode.insertBefore(li, target.nextSibling);
+        const id = parseInt(li.dataset.id, 10);
+        try {
+          await api(`/tasks/${id}/reorder`, {method:"POST",
+            body: JSON.stringify({after: afterId})});
+        } catch {
+          load();    // на ошибке — синхронизируемся с сервером
+        }
+      };
+
+      handle.addEventListener("pointermove", onMove);
+      handle.addEventListener("pointerup", onUp);
+      handle.addEventListener("pointercancel", onUp);
+    });
+  });
 }
 
 function row(t){
   const li = document.createElement("li");
+  li.dataset.id = t.id;
   if (t.overdue) li.classList.add("overdue");
   if (t.completed) li.classList.add("done");
   li.innerHTML = `
     <div class="row">
+      <span class="drag-handle" title="Перетащить">⠿</span>
       <div class="chk ${t.completed?'done':''}" data-act="toggle"></div>
       <div class="ttl">${esc(t.description)}
         <div class="meta"></div></div>

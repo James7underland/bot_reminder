@@ -53,6 +53,7 @@ from database import (
     move_task_up,
     remove_from_myday,
     rename_list,
+    reorder_task,
     search_tasks,
     set_deadline,
     set_important,
@@ -212,6 +213,10 @@ class StepToggle(BaseModel):
 
 class Snooze(BaseModel):
     minutes: int
+
+
+class Reorder(BaseModel):
+    after: int | None = None
 
 
 _STARTED_AT = time.monotonic()
@@ -452,6 +457,27 @@ async def api_move_down(
     _require_own_task(user_id, task_id)
     moved = move_task_down(task_id)
     return {"moved": moved}
+
+
+@app.post("/api/tasks/{task_id}/reorder")
+async def api_reorder(
+    task_id: int,
+    body: Reorder,
+    user_id: int = Depends(current_user_id),
+) -> dict:
+    """
+    Phase 10.6 (drag-and-drop): помещает задачу сразу после `after` (id
+    другой активной задачи того же пользователя в том же списке) либо
+    в начало (`after=null`). 404 на чужую задачу. 409 если `after`
+    указан, но не относится к той же подгруппе.
+    """
+    _require_own_task(user_id, task_id)
+    if body.after is not None:
+        _require_own_task(user_id, body.after)
+    moved = reorder_task(task_id, body.after)
+    if not moved:
+        raise HTTPException(status_code=409, detail="reorder rejected")
+    return {"moved": True}
 
 
 @app.get("/api/lists")
