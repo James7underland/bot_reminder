@@ -848,6 +848,260 @@ def test_api_list_patch_color(client):
 
 # --- Этап 38: стабильность (WAL + busy_timeout) ---
 
+# --- Фаза 10.2: экспорт / импорт ---
+
+def test_db_export_user_data_roundtrip():
+    """
+    Полный снимок: списки, задачи, подзадачи, настройки. Затем тот же
+    payload импортируется ДРУГИМ пользователем и даёт совпадающие данные.
+    """
+    from database import (
+        add_step,
+        add_task,
+        assign_task_to_list,
+        create_list,
+        export_user_data,
+        get_lists,
+        get_steps,
+        get_tasks,
+        get_timezone,
+        import_user_data,
+        mark_step_done,
+        set_important,
+        set_list_color,
+        set_recurrence,
+        set_timezone,
+    )
+    lid = create_list(100, "Work")
+    set_list_color(lid, "#ff8800")
+    a = add_task(100, "alpha")
+    assign_task_to_list(a, lid)
+    set_important(a, True)
+    set_recurrence(a, "daily")
+    add_task(100, "beta")           # без списка
+    s1 = add_step(a, "step1")
+    add_step(a, "step2")
+    mark_step_done(s1, True)
+    set_timezone(100, "Europe/Moscow")
+
+    payload = export_user_data(100)
+    assert payload["version"] == 1
+    assert payload["user"]["id"] == 100
+    assert payload["user"]["timezone"] == "Europe/Moscow"
+    assert {x["name"] for x in payload["lists"]} == {"Work"}
+    assert payload["lists"][0]["color"] == "#ff8800"
+    names = [t["description"] for t in payload["tasks"]]
+    assert names == ["alpha", "beta"]
+    alpha = payload["tasks"][0]
+    assert alpha["important"] is True
+    assert alpha["recurrence"] == "daily"
+    assert alpha["list_name"] == "Work"
+    assert len(alpha["steps"]) == 2
+    assert alpha["steps"][0]["completed"] is True
+    assert payload["tasks"][1]["list_name"] is None
+
+    # Импортируем тому же payload'у — но другому user_id, чтобы не
+    # путаться. Должен пересоздать всё в полном объёме.
+    counts = import_user_data(200, payload, mode="merge")
+    assert counts == {"lists": 1, "tasks": 2, "steps": 2}
+    assert {x["name"] for x in get_lists(200)} == {"Work"}
+    new_alpha = next(t for t in get_tasks(200) if t["description"] == "alpha")
+    assert new_alpha["important"] is True
+    assert new_alpha["recurrence"] == "daily"
+    assert len(get_steps(new_alpha["id"])) == 2
+    assert get_timezone(200) == "Europe/Moscow"
+
+
+def test_db_import_merge_skips_existing_lists_by_name():
+    """В merge-режиме список с тем же именем не дублируется."""
+    from database import (
+        create_list,
+        export_user_data,
+        get_lists,
+        import_user_data,
+    )
+    create_list(101, "Home")
+    payload = export_user_data(101)
+    # Импортируем в того же пользователя — Home уже есть.
+    counts = import_user_data(101, payload, mode="merge")
+    assert counts["lists"] == 0
+    assert [x["name"] for x in get_lists(101)] == ["Home"]
+
+
+def test_db_import_replace_wipes_then_imports():
+    from database import (
+        add_task,
+        create_list,
+        export_user_data,
+        get_lists,
+        get_tasks,
+        import_user_data,
+    )
+    create_list(102, "Old")
+    add_task(102, "to-keep-from-payload")
+    payload = export_user_data(102)
+    # Загрязняем данные, потом replace должен их выкинуть.
+    create_list(102, "Garbage")
+    add_task(102, "garbage")
+    counts = import_user_data(102, payload, mode="replace")
+    assert counts["tasks"] == 1 and counts["lists"] == 1
+    assert [x["name"] for x in get_lists(102)] == ["Old"]
+    assert [t["description"] for t in get_tasks(102)] == ["to-keep-from-payload"]
+
+
+def test_db_import_skips_malformed_entries_silently():
+    """
+    Дефенсивные пути: пустые имена/описания, не-dict в `tasks`, кривой
+    цвет — пропускаются без падения; статистика считает только успешно
+    добавленные строки.
+    """
+    from database import get_lists, get_steps, get_tasks, import_user_data
+    payload = {
+        "version": 1,
+        "lists": [
+            {"name": "", "color": "#000000"},          # пустое имя
+            {"name": "  ", "color": "#FFFFFF"},        # whitespace
+            {"name": "Real", "color": "not-a-color"},  # bad color → дефолт
+        ],
+        "tasks": [
+            "not a dict",
+            {"description": ""},                       # пустое описание
+            {"description": "  "},
+            {"description": "ok", "list_name": "Real",
+             "steps": [{"description": ""}, {"description": "s1"}]},
+        ],
+    }
+    counts = import_user_data(104, payload, mode="merge")
+    assert counts == {"lists": 1, "tasks": 1, "steps": 1}
+    lists = get_lists(104)
+    assert [x["name"] for x in lists] == ["Real"]
+    assert lists[0]["color"] == "#0088CC"   # fallback после bad color
+    tasks = get_tasks(104)
+    assert [t["description"] for t in tasks] == ["ok"]
+    assert [s["description"] for s in get_steps(tasks[0]["id"])] == ["s1"]
+
+
+def test_db_import_rolls_back_on_db_error(monkeypatch):
+    """
+    Симулируем ошибку в середине импорта — транзакция должна
+    откатиться, частичных данных не остаётся.
+    """
+    import sqlite3
+
+    import database
+    from database import (
+        create_list,
+        get_lists,
+        get_tasks,
+        import_user_data,
+    )
+    create_list(105, "Pre-existing")
+    payload = {
+        "version": 1,
+        "lists": [{"name": "New"}],
+        "tasks": [{"description": "ok"}, {"description": "boom"}],
+    }
+    real_conn = database.get_connection
+
+    class _CursorProxy:
+        def __init__(self, c):
+            self._c = c
+            self._n = 0
+
+        def execute(self, sql, *a, **kw):
+            if "INSERT INTO tasks" in sql:
+                self._n += 1
+                if self._n == 2:
+                    raise sqlite3.OperationalError("simulated")
+            return self._c.execute(sql, *a, **kw)
+        def fetchone(self): return self._c.fetchone()
+        def fetchall(self): return self._c.fetchall()
+        @property
+        def lastrowid(self): return self._c.lastrowid
+        @property
+        def rowcount(self): return self._c.rowcount
+
+    class _ConnProxy:
+        def __init__(self, c): self._c = c
+        def cursor(self): return _CursorProxy(self._c.cursor())
+        def commit(self): return self._c.commit()
+        def rollback(self): return self._c.rollback()
+        def close(self): return self._c.close()
+        def execute(self, *a, **kw): return self._c.execute(*a, **kw)
+
+    monkeypatch.setattr(
+        database, "get_connection", lambda: _ConnProxy(real_conn())
+    )
+    try:
+        import_user_data(105, payload, mode="merge")
+    except sqlite3.OperationalError:
+        pass
+    else:
+        raise AssertionError("expected the simulated error to propagate")
+    monkeypatch.setattr(database, "get_connection", real_conn)
+    # Должно остаться только то, что было до импорта (rollback сработал).
+    assert [x["name"] for x in get_lists(105)] == ["Pre-existing"]
+    assert get_tasks(105) == []
+
+
+def test_db_import_rejects_bad_payload():
+    from database import import_user_data
+    for bad in ("not a dict", 5, None,
+                {}, {"version": 999, "lists": [], "tasks": []},
+                {"version": 1, "lists": [], "tasks": "no"},
+                {"version": 1, "lists": "no", "tasks": []}):
+        try:
+            import_user_data(103, bad, mode="merge")
+        except ValueError:
+            continue
+        raise AssertionError(f"expected ValueError for {bad!r}")
+    # Невалидный режим.
+    valid = {"version": 1, "lists": [], "tasks": []}
+    try:
+        import_user_data(103, valid, mode="weird")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError for bad mode")
+
+
+def test_api_export_then_import(client):
+    # Создаём данные у user 42.
+    lid = client.post(
+        "/api/lists", json={"name": "Travel"}, headers=hdr()
+    ).json()["id"]
+    client.patch(f"/api/lists/{lid}", json={"color": "#10B981"}, headers=hdr())
+    tid = client.post(
+        "/api/tasks", json={"description": "pack"}, headers=hdr()
+    ).json()["id"]
+    client.post(f"/api/tasks/{tid}/list",
+                json={"list_id": lid}, headers=hdr())
+    client.post(f"/api/tasks/{tid}/steps",
+                json={"description": "passport"}, headers=hdr())
+
+    exp = client.get("/api/export", headers=hdr()).json()
+    assert exp["version"] == 1 and len(exp["tasks"]) == 1
+    assert exp["tasks"][0]["list_name"] == "Travel"
+    assert exp["tasks"][0]["steps"][0]["description"] == "passport"
+
+    # Импортируем тот же payload другому юзеру.
+    r = client.post(
+        "/api/import",
+        json={"payload": exp, "mode": "merge"},
+        headers=hdr(77),
+    )
+    assert r.status_code == 200
+    new_tasks = client.get("/api/tasks", headers=hdr(77)).json()
+    assert [t["description"] for t in new_tasks] == ["pack"]
+    assert [x["name"] for x in client.get(
+        "/api/lists", headers=hdr(77)).json()] == ["Travel"]
+    # Битый payload → 422
+    bad = client.post(
+        "/api/import", json={"payload": {"version": 999}}, headers=hdr(77)
+    )
+    assert bad.status_code == 422
+
+
 def test_db_connection_uses_wal_and_busy_timeout():
     """
     Без WAL писатель блокирует всех читателей — на VPS это проявлялось

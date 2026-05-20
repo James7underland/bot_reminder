@@ -28,6 +28,7 @@ from database import (
     create_list,
     delete_list,
     delete_step,
+    export_user_data,
     get_important_tasks,
     get_lists,
     get_myday,
@@ -38,6 +39,7 @@ from database import (
     get_tasks,
     get_tasks_by_list,
     get_timezone,
+    import_user_data,
     init_db,
     is_valid_recurrence,
     mark_step_done,
@@ -511,6 +513,32 @@ async def api_set_settings(
         raise HTTPException(status_code=422, detail="bad timezone") from None
     set_timezone(user_id, tz)
     return {"timezone": tz}
+
+
+# --- Экспорт / импорт пользовательских данных (Фаза 10.2) ---
+
+class ImportBody(BaseModel):
+    payload: dict
+    mode: str = "merge"
+
+
+@app.get("/api/export")
+async def api_export(
+    user_id: int = Depends(current_user_id),
+) -> dict:
+    """Возвращает полный JSON-снимок данных пользователя для бэкапа."""
+    return export_user_data(user_id)
+
+
+@app.post("/api/import")
+async def api_import(
+    body: ImportBody, user_id: int = Depends(current_user_id),
+) -> dict:
+    """Импортирует JSON-снимок. 422 при невалидной схеме/режиме."""
+    try:
+        return import_user_data(user_id, body.payload, mode=body.mode)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
 
 
 # Раздача фронтенда Mini App. Монтируется ПОСЛЕ API-маршрутов, чтобы
