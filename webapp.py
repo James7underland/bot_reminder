@@ -54,6 +54,7 @@ from database import (
     remove_from_myday,
     rename_list,
     reorder_task,
+    restore_list,
     search_tasks,
     set_deadline,
     set_important,
@@ -534,6 +535,28 @@ async def api_delete_list(
 ) -> dict:
     _require_own_list(user_id, list_id)
     return {"ok": delete_list(list_id)}
+
+
+@app.post("/api/lists/{list_id}/restore")
+async def api_restore_list(
+    list_id: int, user_id: int = Depends(current_user_id)
+) -> dict:
+    """
+    Phase 10.7: восстанавливает soft-deleted список (окно отмены 24 ч).
+    404 если списка нет (включая чужой) или он не был удалён. `_require_
+    own_list` использует видимые списки → для проверки права смотрим
+    напрямую: в видимых нет, но в БД — есть у этого user_id и помечен
+    deleted_at IS NOT NULL.
+    """
+    all_lists = {lst["id"]: lst
+                 for lst in get_lists(user_id, include_deleted=True)}
+    target = all_lists.get(list_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="list not found")
+    if target.get("deleted_at") is None:
+        raise HTTPException(status_code=404, detail="list is not deleted")
+    restore_list(list_id)
+    return {"ok": True}
 
 
 @app.post("/api/tasks/{task_id}/list")

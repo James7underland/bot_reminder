@@ -100,6 +100,11 @@
   .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
   .toast.err{background:#b91c1c}
   .toast.ok{background:#16a34a}
+  .toast.undo{display:flex;gap:12px;align-items:center;
+    background:#1f2937;pointer-events:auto}
+  .toast-action{background:transparent;color:#60a5fa;border:none;
+    font-weight:600;padding:0;cursor:pointer}
+  .toast-action:hover{text-decoration:underline}
 </style>
 </head>
 <body>
@@ -291,6 +296,32 @@ function uiToast(msg, kind = "err") {
     t.classList.remove("show");
     setTimeout(() => t.parentNode && t.parentNode.removeChild(t), 250);
   }, 4000);
+}
+
+// Phase 10.7: тост с кнопкой действия («Отменить»). Закрывается либо
+// по клику на кнопку (выполняется action), либо по таймауту.
+function uiUndoToast(msg, action, ms = 6000) {
+  const esc = s => String(s).replace(/[&<>"]/g,
+    c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+  const t = document.createElement("div");
+  t.className = "toast undo";
+  t.innerHTML =
+    `<span>${esc(msg)}</span>
+     <button class="toast-action">Отменить</button>`;
+  document.body.appendChild(t);
+  requestAnimationFrame(() => t.classList.add("show"));
+  let done = false;
+  const close = async (act) => {
+    if (done) return;
+    done = true;
+    t.classList.remove("show");
+    setTimeout(() => t.parentNode && t.parentNode.removeChild(t), 250);
+    if (act) {
+      try { await action(); } catch (e) { uiToast(String(e.message || e)); }
+    }
+  };
+  t.querySelector(".toast-action").onclick = () => close(true);
+  setTimeout(() => close(false), ms);
 }
 
 async function api(path, opts={}) {
@@ -765,11 +796,24 @@ $("#renList").onclick = async () => {
 $("#delList").onclick = async () => {
   const id = curListId();
   if (!id) { await uiAlert("Сначала выберите список в выпадающем меню"); return; }
-  if (await uiConfirm("Удалить список? Задачи останутся без списка.")) {
-    await api(`/lists/${id}`, {method:"DELETE"});
-    listId = "all";
-    await loadLists(); load();
-  }
+  const name = (LISTS.find(l => String(l.id) === String(id)) || {}).name || id;
+  // Phase 10.7: soft-delete с возможностью отмены. Сразу скрываем
+  // и показываем тост с кнопкой «Отменить» (8 секунд).
+  await api(`/lists/${id}`, {method:"DELETE"});
+  listId = "all";
+  saveUI({listId: "all"});
+  await loadLists(); load();
+  uiUndoToast(
+    `Список «${name}» удалён.`,
+    async () => {
+      await api(`/lists/${id}/restore`, {method:"POST"});
+      listId = String(id);
+      saveUI({listId: listId});
+      await loadLists(); load();
+      uiToast("Список восстановлен", "ok");
+    },
+    8000,
+  );
 };
 $("#clrList").onclick = async () => {
   const id = curListId();

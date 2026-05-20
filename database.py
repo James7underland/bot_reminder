@@ -67,7 +67,8 @@ def init_db():
             user_id INTEGER NOT NULL,
             name TEXT NOT NULL,
             color TEXT NOT NULL DEFAULT '#0088CC',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            deleted_at TEXT
         )
     ''')
     cursor.execute('''
@@ -136,6 +137,9 @@ def init_db():
             "ALTER TABLE lists ADD COLUMN color TEXT NOT NULL "
             "DEFAULT '#0088CC'"
         )
+    # Фаза 10.7: soft-delete для списков (с поддержкой undo).
+    if "deleted_at" not in list_columns:
+        cursor.execute("ALTER TABLE lists ADD COLUMN deleted_at TEXT")
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована.")
@@ -361,15 +365,26 @@ def create_list(user_id: int, name: str) -> int:
     return list_id
 
 
-def get_lists(user_id: int) -> list[dict]:
-    """Списки пользователя (по времени создания)."""
+def get_lists(user_id: int, include_deleted: bool = False) -> list[dict]:
+    """
+    Списки пользователя (по времени создания). По умолчанию исключает
+    soft-deleted (Phase 10.7). `include_deleted=True` нужен только для
+    эндпоинта восстановления / cron-purge.
+    """
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    cursor.execute(
-        "SELECT * FROM lists WHERE user_id = ? ORDER BY created_at, id",
-        (user_id,),
-    )
+    if include_deleted:
+        cursor.execute(
+            "SELECT * FROM lists WHERE user_id = ? ORDER BY created_at, id",
+            (user_id,),
+        )
+    else:
+        cursor.execute(
+            "SELECT * FROM lists WHERE user_id = ? AND deleted_at IS NULL "
+            "ORDER BY created_at, id",
+            (user_id,),
+        )
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
@@ -419,21 +434,93 @@ def set_list_color(list_id: int, color: str) -> bool:
 
 
 def delete_list(list_id: int) -> bool:
-    """Удаляет список; его задачи переносятся в «без списка» (list_id=NULL)."""
+    """
+    Soft-delete списка (Phase 10.7): помечает `deleted_at = now()`, но
+    физически не удаляет. Задачи СОХРАНЯЮТ `list_id` (на время окна
+    отмены, чтобы restore вернул всё на места). Если уже удалён —
+    повторно False (idempotency).
+
+    Реальное удаление выполняет `purge_deleted_lists()` через 24 ч.
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE tasks SET list_id = NULL WHERE list_id = ?", (list_id,)
+        "UPDATE lists SET deleted_at = CURRENT_TIMESTAMP "
+        "WHERE id = ? AND deleted_at IS NULL",
+        (list_id,),
     )
-    cursor.execute("DELETE FROM lists WHERE id = ?", (list_id,))
     rows_affected = cursor.rowcount
     conn.commit()
     conn.close()
     if rows_affected > 0:
-        logger.info("list=%s deleted", list_id)
+        logger.info("list=%s soft-deleted", list_id)
         return True
-    logger.warning("delete_list: list=%s not found", list_id)
+    logger.warning("delete_list: list=%s not found or already deleted", list_id)
     return False
+
+
+def restore_list(list_id: int) -> bool:
+    """
+    Phase 10.7: отменяет soft-delete. Возвращает True, если список был
+    в состоянии deleted (и теперь восстановлен). False — если списка
+    нет, или он и так активен.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE lists SET deleted_at = NULL "
+        "WHERE id = ? AND deleted_at IS NOT NULL",
+        (list_id,),
+    )
+    rows_affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows_affected > 0:
+        logger.info("list=%s restored", list_id)
+        return True
+    logger.warning("restore_list: list=%s not found or not deleted", list_id)
+    return False
+
+
+def purge_deleted_lists(older_than_hours: int = 24) -> int:
+    """
+    Phase 10.7: физическое удаление списков, помеченных как deleted
+    дольше `older_than_hours` часов. Их задачи отвязываются
+    (`list_id=NULL`) — то же поведение, что было раньше у hard-delete.
+    Возвращает число удалённых списков. Вызывается из APScheduler
+    раз в час (см. `scheduler.py`).
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("BEGIN")
+        # Находим id'шники, чтобы отвязать их задачи.
+        cursor.execute(
+            "SELECT id FROM lists WHERE deleted_at IS NOT NULL AND "
+            "datetime(deleted_at) <= datetime('now', ?)",
+            (f"-{int(older_than_hours)} hours",),
+        )
+        ids = [row[0] for row in cursor.fetchall()]
+        if not ids:
+            conn.rollback()
+            conn.close()
+            return 0
+        placeholders = ",".join("?" * len(ids))
+        cursor.execute(
+            f"UPDATE tasks SET list_id = NULL WHERE list_id IN ({placeholders})",
+            ids,
+        )
+        cursor.execute(
+            f"DELETE FROM lists WHERE id IN ({placeholders})", ids
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    logger.info("purge_deleted_lists: removed %d list(s)", len(ids))
+    return len(ids)
 
 
 def assign_task_to_list(task_id: int, list_id: int | None) -> bool:
@@ -1473,8 +1560,12 @@ def import_user_data(
             cursor.execute("DELETE FROM lists WHERE user_id = ?", (user_id,))
 
         # Списки: имя → id, переиспользуем существующие в merge.
+        # Soft-deleted списки (Phase 10.7) НЕ переиспользуем — пользователь
+        # их явно удалил, импорт должен создать новый.
         cursor.execute(
-            "SELECT id, name FROM lists WHERE user_id = ?", (user_id,)
+            "SELECT id, name FROM lists WHERE user_id = ? "
+            "AND deleted_at IS NULL",
+            (user_id,),
         )
         name_to_id = {row[1]: row[0] for row in cursor.fetchall()}
         lists_added = 0

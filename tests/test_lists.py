@@ -55,16 +55,30 @@ def test_rename_list():
     assert rename_list(999999, "X") is False
 
 
-def test_delete_list_unassigns_tasks():
+def test_delete_list_is_soft_with_undo_window():
+    """
+    Phase 10.7: delete_list — soft. Список скрывается из get_lists,
+    но задачи СОХРАНЯЮТ list_id (на время undo-окна). Hard-удаление —
+    через `purge_deleted_lists` после 24 часов.
+    """
     lid = create_list(1, "L")
     tid = add_task(1, "task")
     assign_task_to_list(tid, lid)
     assert [t["id"] for t in get_tasks_by_list(1, lid)] == [tid]
 
     assert delete_list(lid) is True
+    # Из get_lists() (видимых) — исчез
     assert get_lists(1) == []
-    # задача осталась, но без списка
-    assert [t["id"] for t in get_tasks_by_list(1, None)] == [tid]
+    # С include_deleted=True — виден, deleted_at заполнен
+    all_lists = get_lists(1, include_deleted=True)
+    assert len(all_lists) == 1
+    assert all_lists[0]["deleted_at"] is not None
+    # Задача сохранила привязку — не переехала в «без списка»
+    assert [t["id"] for t in get_tasks_by_list(1, None)] == []
+    assert [t["id"] for t in get_tasks_by_list(1, lid)] == [tid]
+    # Повторный delete (уже удалённого) → False
+    assert delete_list(lid) is False
+    # Несуществующий → False
     assert delete_list(999999) is False
 
 

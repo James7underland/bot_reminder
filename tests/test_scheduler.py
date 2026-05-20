@@ -150,7 +150,10 @@ async def test_setup_scheduler_defers_start_to_post_init():
     with patch.object(scheduler, "AsyncIOScheduler", return_value=fake):
         result = scheduler.setup_scheduler(app)
     assert result is fake
-    fake.add_job.assert_called_once()
+    # С Phase 10.7 — два job'а: reminders + purge_deleted.
+    assert fake.add_job.call_count == 2
+    job_ids = {call.kwargs.get("id") for call in fake.add_job.call_args_list}
+    assert job_ids == {"reminders", "purge_deleted"}
     # НЕ стартует синхронно — это и был прод-баг "no running event loop"
     fake.start.assert_not_called()
     # старт/стоп навешаны на жизненный цикл приложения
@@ -158,6 +161,20 @@ async def test_setup_scheduler_defers_start_to_post_init():
     fake.start.assert_called_once()
     await app.post_shutdown(app)
     fake.shutdown.assert_called_once()
+
+
+def test_purge_job_wrapper_swallows_errors(monkeypatch, caplog):
+    """`_purge_old_soft_deletes` логирует ошибку, но НЕ кидает —
+    иначе APScheduler пометит job сломанным и в худшем случае
+    перестанет запускать."""
+    import scheduler as scheduler_mod
+
+    def boom(**kw):
+        raise RuntimeError("simulated db crash")
+    monkeypatch.setattr(scheduler_mod, "purge_deleted_lists", boom)
+    with caplog.at_level("ERROR"):
+        scheduler_mod._purge_old_soft_deletes()   # не должно падать
+    assert any("purge_deleted_lists failed" in m for m in caplog.messages)
 
 
 async def test_setup_scheduler_stop_skips_when_not_running():
