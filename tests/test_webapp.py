@@ -1333,3 +1333,154 @@ def test_api_timezones_requires_auth_and_returns_list(client):
     assert isinstance(body, list) and len(body) > 30
     keys = set(body[0].keys())
     assert {"tz", "label", "group", "offset", "offset_minutes"} <= keys
+
+
+# --- Фаза 10.6: drag-and-drop переупорядочивание ---
+
+def test_db_reorder_task_after_some_neighbor():
+    """Двигаем c в позицию сразу после a: было a,b,c → стало a,c,b."""
+    from database import add_task, get_tasks, reorder_task
+    a = add_task(400, "a")
+    b = add_task(400, "b")
+    c = add_task(400, "c")
+    assert [t["id"] for t in get_tasks(400)] == [a, b, c]
+    assert reorder_task(c, after_task_id=a) is True
+    assert [t["id"] for t in get_tasks(400)] == [a, c, b]
+
+
+def test_db_reorder_task_to_beginning_with_none():
+    """after=None → задача становится первой."""
+    from database import add_task, get_tasks, reorder_task
+    a = add_task(401, "a")
+    b = add_task(401, "b")
+    c = add_task(401, "c")
+    assert reorder_task(c, after_task_id=None) is True
+    assert [t["id"] for t in get_tasks(401)] == [c, a, b]
+
+
+def test_db_reorder_task_respects_list_grouping():
+    """Сосед `after` обязан быть в той же подгруппе (user+list)."""
+    from database import (
+        add_task,
+        assign_task_to_list,
+        create_list,
+        get_tasks_by_list,
+        reorder_task,
+    )
+    lid = create_list(402, "L")
+    a = add_task(402, "a")                # без списка
+    b = add_task(402, "b")                # без списка
+    c = add_task(402, "c")
+    d = add_task(402, "d")
+    assign_task_to_list(c, lid)           # в L
+    assign_task_to_list(d, lid)           # тоже в L
+    # a в «без списка», c в L — нельзя их связать.
+    assert reorder_task(a, after_task_id=c) is False
+    # Та же подгруппа — можно.
+    assert reorder_task(a, after_task_id=b) is True
+    # Реордер внутри именованного списка (покрывает ветку list_id IS NOT NULL).
+    assert reorder_task(c, after_task_id=d) is True
+    assert [t["id"] for t in get_tasks_by_list(402, lid)] == [d, c]
+
+
+def test_db_reorder_task_rolls_back_on_db_error(monkeypatch):
+    """Сбой в середине UPDATE — целое перенумерование откатывается."""
+    import sqlite3
+
+    import database
+    from database import add_task, get_tasks, reorder_task
+    a = add_task(405, "a")
+    b = add_task(405, "b")
+    c = add_task(405, "c")
+    before = [t["id"] for t in get_tasks(405)]
+
+    real_conn = database.get_connection
+
+    class CP:
+        def __init__(self, c):
+            self._c = c
+            self._n = 0
+
+        def execute(self, sql, *a, **kw):
+            if sql.startswith("UPDATE tasks SET order_index"):
+                self._n += 1
+                if self._n == 2:
+                    raise sqlite3.OperationalError("simulated")
+            return self._c.execute(sql, *a, **kw)
+        def fetchone(self): return self._c.fetchone()
+        def fetchall(self): return self._c.fetchall()
+
+    class CO:
+        def __init__(self, c): self._c = c
+        @property
+        def row_factory(self): return self._c.row_factory
+        @row_factory.setter
+        def row_factory(self, v): self._c.row_factory = v
+        def cursor(self): return CP(self._c.cursor())
+        def commit(self): return self._c.commit()
+        def rollback(self): return self._c.rollback()
+        def close(self): return self._c.close()
+        def execute(self, *a, **kw): return self._c.execute(*a, **kw)
+
+    monkeypatch.setattr(database, "get_connection", lambda: CO(real_conn()))
+    try:
+        reorder_task(c, after_task_id=a)
+    except sqlite3.OperationalError:
+        pass
+    else:
+        raise AssertionError("expected OperationalError to propagate")
+    monkeypatch.setattr(database, "get_connection", real_conn)
+    after = [t["id"] for t in get_tasks(405)]
+    assert before == after, "rollback должен оставить порядок прежним"
+
+
+def test_db_reorder_task_invalid_inputs():
+    from database import (
+        add_task,
+        complete_task,
+        get_tasks,
+        reorder_task,
+    )
+    a = add_task(403, "a")
+    add_task(403, "b")
+    complete_task(a)
+    # Выполненная — нельзя
+    assert reorder_task(a, after_task_id=None) is False
+    # Несуществующая
+    assert reorder_task(999999, after_task_id=None) is False
+    # Несуществующий after
+    z = add_task(404, "z")
+    assert reorder_task(z, after_task_id=999999) is False
+    # Активные не двинулись.
+    assert len(get_tasks(403)) >= 1
+
+
+def test_api_reorder(client):
+    a = client.post("/api/tasks", json={"description": "a"},
+                    headers=hdr()).json()["id"]
+    b = client.post("/api/tasks", json={"description": "b"},
+                    headers=hdr()).json()["id"]
+    c = client.post("/api/tasks", json={"description": "c"},
+                    headers=hdr()).json()["id"]
+    # Двигаем c в начало
+    r = client.post(f"/api/tasks/{c}/reorder",
+                    json={"after": None}, headers=hdr())
+    assert r.status_code == 200 and r.json() == {"moved": True}
+    ids = [t["id"] for t in client.get("/api/tasks", headers=hdr()).json()]
+    assert ids == [c, a, b]
+    # Чужая задача → 404
+    assert client.post(f"/api/tasks/{c}/reorder",
+                      json={"after": None}, headers=hdr(99)).status_code == 404
+    # after — чужая задача → тоже 404 (на _require_own_task)
+    assert client.post(f"/api/tasks/{c}/reorder",
+                      json={"after": 999999}, headers=hdr()).status_code == 404
+    # after — наша задача, но в другом списке → 409 (reorder rejected)
+    lid = client.post("/api/lists", json={"name": "L"},
+                      headers=hdr()).json()["id"]
+    d = client.post("/api/tasks", json={"description": "d"},
+                    headers=hdr()).json()["id"]
+    client.post(f"/api/tasks/{d}/list",
+                json={"list_id": lid}, headers=hdr())
+    # c — без списка, d — в L → 409
+    assert client.post(f"/api/tasks/{c}/reorder",
+                      json={"after": d}, headers=hdr()).status_code == 409

@@ -1167,6 +1167,79 @@ def move_task_down(task_id: int) -> bool:
     return _move_task(task_id, 1)
 
 
+def reorder_task(task_id: int, after_task_id: int | None) -> bool:
+    """
+    Phase 10.6 (drag-and-drop): помещает `task_id` сразу после
+    `after_task_id` среди активных задач того же пользователя в том же
+    списке. `after_task_id=None` — двигает в начало. Если `after_task_id`
+    отсутствует/принадлежит другому юзеру или списку — False.
+
+    Внутри: одна транзакция. Достаём всех активных «соседей» (user_id,
+    list_id), убираем `task_id` из их последовательности, вставляем в
+    нужное место, перенумеровываем `order_index = i+1`. Простая
+    линейная сложность — на практике задач немного.
+    """
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "SELECT user_id, list_id, completed FROM tasks WHERE id = ?",
+            (task_id,),
+        )
+        row = cursor.fetchone()
+        if row is None or row["completed"]:
+            return False
+        user_id, list_id = row["user_id"], row["list_id"]
+        # Берём только активных соседей (выполненные не отображаются и
+        # не должны влиять на порядок). Сортировка стабильна по
+        # текущему order_index, потом по created_at, потом по id.
+        if list_id is None:
+            cursor.execute(
+                "SELECT id FROM tasks WHERE user_id = ? AND completed = 0 "
+                "AND list_id IS NULL "
+                "ORDER BY order_index, created_at, id",
+                (user_id,),
+            )
+        else:
+            cursor.execute(
+                "SELECT id FROM tasks WHERE user_id = ? AND completed = 0 "
+                "AND list_id = ? "
+                "ORDER BY order_index, created_at, id",
+                (user_id, list_id),
+            )
+        ids = [r["id"] for r in cursor.fetchall()]
+        if task_id not in ids:
+            return False
+        ids.remove(task_id)
+        if after_task_id is None:
+            ids.insert(0, task_id)
+        else:
+            if after_task_id not in ids:
+                # Соседа нет в той же подгруппе → отвергаем.
+                return False
+            pos = ids.index(after_task_id) + 1
+            ids.insert(pos, task_id)
+        # Записываем новые order_index одной транзакцией.
+        cursor.execute("BEGIN")
+        for new_idx, tid in enumerate(ids, start=1):
+            cursor.execute(
+                "UPDATE tasks SET order_index = ? WHERE id = ?",
+                (new_idx, tid),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    logger.info(
+        "task=%s reordered after=%s (user=%s list=%s)",
+        task_id, after_task_id, user_id, list_id,
+    )
+    return True
+
+
 # --- Здоровье / статистика (Фаза 10.3) ---
 
 def db_ping() -> bool:
