@@ -474,3 +474,29 @@ snooze, ручной порядок, мелочи UI. Вне scope: файлов
 - **9.3 ✅ (PR #32):** Snooze напоминаний. БД: `snooze_reminder(task_id, minutes) -> bool` сдвигает `reminder_at` к `now(UTC)+minutes` и сбрасывает `reminder_sent`. API: `POST /api/tasks/{id}/snooze` (422 при `minutes<=0`, 404 на чужую). Фронтенд: кнопки `+15 мин`, `+1 ч`, `до завтра 9:00` (последняя считает локальную дельту до 09:00 завтра). 249 тестов.
 - **9.4 ✅ (PR #33):** Ручной порядок задач. БД: колонка `order_index` (миграция: бэкфилл по `id`), `add_task` ставит `max+1` для пользователя, дефолтная сортировка `get_tasks`/`get_tasks_by_list` теперь по `order_index, created_at` (sort=`created` сохраняет старую семантику). `move_task_up`/`move_task_down` свопят `order_index` с ближайшим активным соседом того же user+list (включая `list_id IS NULL`); крайняя и выполненная задача → False. API: `POST /api/tasks/{id}/move-up` / `…/move-down` (404 на чужую, тело `{"moved": bool}`). Фронтенд: в строке задачи две маленькие кнопки ▲/▼ рядом со звездой. 257 тестов.
 - **9.5 ✅ (PR #34):** UI-полировка. (a) Прогресс подзадач: `get_steps_counts(user_id)` — один SQL `GROUP BY task_id`, без N+1; декорируется в `/api/tasks` / `/api/myday` / `/api/planned` / `/api/important` полями `steps_done` / `steps_total`; в Mini App в meta задачи появляется `📋 N/M`. (b) Цвет списка: колонка `lists.color` (`#0088CC` по умолчанию), валидация `^#[0-9A-Fa-f]{6}$`, `set_list_color(list_id, color)`; PATCH `/api/lists/{id}` принимает `{name?, color?}` и возвращает полный dict списка (422 на пустое тело/битый цвет); в Mini App кнопка 🎨 открывает нативный color picker, опции в селекте окрашены `color: <hex>`. 261 тест.
+
+## Phase 10 — стабильность и эксплуатация
+
+Жалоба пользователя: периодически залипает менюшка в Mini App
+(невозможно выбрать цвет или ввести имя списка) — помогает только
+перезапуск. Это **продолжение паритета**: пользователь воспринимает
+такие хвосты как «бот сырой», а не «новая фича не нужна».
+
+- **10.1 ✅ (PR #35):** Залипания UI и блокировки БД.
+  (a) Frontend: убраны нативные `window.alert/prompt/confirm` — в
+  Telegram WebView они не возвращают фокус в JS-цикл, из-за чего
+  следующие клики «не доходят». Введены обёртки `uiAlert/uiConfirm/
+  uiPrompt`, поверх `Telegram.WebApp.showAlert/showConfirm` (где есть)
+  и кастомного inline-оверлея для prompt (поддержка Enter/Escape и
+  Telegram BackButton как «Отмена»). Для color-picker — гарантированный
+  cleanup скрытого `<input type="color">` на blur и 60-сек таймауте.
+  (b) Backend: `get_connection()` теперь включает `journal_mode=WAL`
+  и `busy_timeout=5000` — без этого `bot_reminder` (планировщик) и
+  `bot_webapp` (HTTP API) пишут в одну БД через эксклюзивный лок, и
+  запросы из Mini App могли висеть на блокировке. Регресс-тест
+  проверяет, что новые соединения отдают WAL и 5-сек ожидание.
+
+- 10.2 Backup/restore (cron-snapshot SQLite, эндпоинт экспорта/импорта
+  задач в JSON, чтобы пользователь мог унести/восстановить данные).
+- 10.3 Здоровье и логирование (DB-ping в `/healthz`, ротация логов,
+  базовые метрики количества задач/запросов).

@@ -61,6 +61,19 @@
   .f-cust .wd label{font-size:12px}
   .pbtns{display:flex;gap:8px;flex-wrap:wrap}
   .muted{color:var(--hint);text-align:center;padding:30px 16px}
+  .modal-back{position:fixed;inset:0;background:rgba(0,0,0,.55);
+    display:flex;align-items:center;justify-content:center;z-index:9999;
+    padding:20px}
+  .modal{background:var(--bg);color:var(--fg);
+    border:1px solid var(--hint);border-radius:12px;
+    padding:16px;max-width:360px;width:100%}
+  .modal-title{font-size:15px;margin-bottom:10px}
+  .modal-input{width:100%;padding:10px;font-size:15px;
+    background:var(--card);color:var(--fg);
+    border:1px solid var(--hint);border-radius:8px}
+  .modal-btns{display:flex;gap:8px;justify-content:flex-end;
+    margin-top:12px}
+  .modal-btns button{padding:8px 14px}
 </style>
 </head>
 <body>
@@ -105,6 +118,66 @@
 const tg = window.Telegram ? window.Telegram.WebApp : null;
 if (tg) { tg.ready(); tg.expand(); }
 const INIT = tg ? tg.initData : "";
+
+// --- Модалы. Нативные window.alert/prompt/confirm в Telegram WebApp
+// работают нестабильно (фокус не возвращается → менюшки «залипают»).
+// Используем Telegram.WebApp.showAlert/showPopup, для ввода — кастомный
+// inline-overlay. Все вызовы — Promise-based, без callback hell.
+
+function uiAlert(message){
+  return new Promise(resolve => {
+    if (tg && tg.showAlert) tg.showAlert(String(message), () => resolve());
+    else { window.alert(message); resolve(); }
+  });
+}
+
+function uiConfirm(message){
+  return new Promise(resolve => {
+    if (tg && tg.showConfirm) tg.showConfirm(String(message), ok => resolve(!!ok));
+    else resolve(window.confirm(message));
+  });
+}
+
+function uiPrompt(title, defaultValue=""){
+  // У TG WebApp нет нативного prompt — рисуем оверлей с input + двумя
+  // кнопками. Промис разрешается значением или null (cancel).
+  return new Promise(resolve => {
+    const back = document.createElement("div");
+    back.className = "modal-back";
+    back.innerHTML =
+      `<div class="modal">
+         <div class="modal-title">${String(title)
+           .replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",
+                                      ">":"&gt;",'"':"&quot;"}[c]))}</div>
+         <input class="modal-input" type="text">
+         <div class="modal-btns">
+           <button class="ghost modal-cancel">Отмена</button>
+           <button class="modal-ok">OK</button>
+         </div>
+       </div>`;
+    document.body.appendChild(back);
+    const inp = back.querySelector(".modal-input");
+    inp.value = defaultValue || "";
+    const close = (val) => {
+      if (back.parentNode) back.parentNode.removeChild(back);
+      resolve(val);
+    };
+    back.querySelector(".modal-cancel").onclick = () => close(null);
+    back.querySelector(".modal-ok").onclick = () => close(inp.value);
+    inp.addEventListener("keydown", e => {
+      if (e.key === "Enter") close(inp.value);
+      else if (e.key === "Escape") close(null);
+    });
+    // Если пользователь нажал Telegram BackButton — отмена.
+    if (tg && tg.BackButton) {
+      tg.BackButton.show();
+      const off = () => { tg.BackButton.hide(); tg.offEvent("backButtonClicked", off);
+                          close(null); };
+      tg.onEvent("backButtonClicked", off);
+    }
+    setTimeout(() => inp.focus(), 30);
+  });
+}
 
 async function api(path, opts={}) {
   const r = await fetch("/api" + path, {
@@ -323,11 +396,11 @@ function row(t){
         if (mode === "weekdays") {
           const days = [...li.querySelectorAll(".f-wd:checked")]
             .map(c => c.value);
-          if (!days.length) { alert("Выберите хотя бы один день"); return; }
+          if (!days.length) { await uiAlert("Выберите хотя бы один день"); return; }
           rec = "weekdays:" + days.join(",");
         } else {
           const n = parseInt($(".f-rcn",li).value, 10);
-          if (!(n >= 1)) { alert("N должно быть ≥ 1"); return; }
+          if (!(n >= 1)) { await uiAlert("N должно быть ≥ 1"); return; }
           rec = "every:" + n + ":" + $(".f-rcu",li).value;
         }
       }
@@ -417,7 +490,7 @@ $("#search").addEventListener("input", () => {
 });
 $("#listSel").onchange = e => { listId = e.target.value; load(); };
 $("#newList").onclick = async () => {
-  const name = prompt("Название списка");
+  const name = await uiPrompt("Название списка");
   if (name && name.trim()) {
     await api("/lists", {method:"POST",
       body: JSON.stringify({name:name.trim()})});
@@ -429,8 +502,9 @@ function curListId(){
 }
 $("#renList").onclick = async () => {
   const id = curListId();
-  if (!id) { alert("Сначала выберите список в выпадающем меню"); return; }
-  const name = prompt("Новое название списка");
+  if (!id) { await uiAlert("Сначала выберите список в выпадающем меню"); return; }
+  const cur = (LISTS.find(l => String(l.id) === String(id)) || {}).name || "";
+  const name = await uiPrompt("Новое название списка", cur);
   if (name && name.trim()) {
     await api(`/lists/${id}`, {method:"PATCH",
       body: JSON.stringify({name:name.trim()})});
@@ -439,8 +513,8 @@ $("#renList").onclick = async () => {
 };
 $("#delList").onclick = async () => {
   const id = curListId();
-  if (!id) { alert("Сначала выберите список в выпадающем меню"); return; }
-  if (confirm("Удалить список? Задачи останутся без списка.")) {
+  if (!id) { await uiAlert("Сначала выберите список в выпадающем меню"); return; }
+  if (await uiConfirm("Удалить список? Задачи останутся без списка.")) {
     await api(`/lists/${id}`, {method:"DELETE"});
     listId = "all";
     await loadLists(); load();
@@ -448,35 +522,43 @@ $("#delList").onclick = async () => {
 };
 $("#clrList").onclick = async () => {
   const id = curListId();
-  if (!id) { alert("Сначала выберите список в выпадающем меню"); return; }
+  if (!id) { await uiAlert("Сначала выберите список в выпадающем меню"); return; }
   const cur = (LISTS.find(l => String(l.id) === String(id)) || {}).color
               || "#0088CC";
-  // Скрытый <input type="color"> — нативный пикер браузера, без prompt.
+  // Скрытый <input type="color"> — нативный пикер. На случай отмены
+  // (нет события change) — удаляем узел через blur и не оставляем
+  // мёртвых элементов в DOM (от которых, теоретически, могла «залипать»
+  // менюшка при повторных открытиях).
   const inp = document.createElement("input");
   inp.type = "color"; inp.value = cur;
   inp.style.position = "absolute"; inp.style.opacity = "0";
+  inp.style.left = "-9999px";
   document.body.appendChild(inp);
+  const cleanup = () => { if (inp.parentNode) inp.parentNode.removeChild(inp); };
   inp.addEventListener("change", async () => {
     const color = inp.value;
-    document.body.removeChild(inp);
+    cleanup();
     if (!color || color === cur) return;
     await api(`/lists/${id}`, {method:"PATCH",
       body: JSON.stringify({color: color})});
     await loadLists(); load();
   }, {once: true});
+  // Подстраховка от утечки, если событие change не пришло.
+  inp.addEventListener("blur", cleanup, {once: true});
+  setTimeout(cleanup, 60_000);   // финальный «гарантированный» прибор
   inp.click();
 };
 $("#tzBtn").onclick = async () => {
   const cur = (await api("/settings")).timezone;
-  const tz = prompt("Часовой пояс (IANA, напр. Europe/Moscow)", cur);
+  const tz = await uiPrompt("Часовой пояс (IANA, напр. Europe/Moscow)", cur);
   if (tz && tz.trim() && tz.trim() !== cur) {
     const r = await fetch("/api/settings", {
       method:"PUT",
       headers:{"Content-Type":"application/json","X-Init-Data":INIT},
       body: JSON.stringify({timezone: tz.trim()}),
     });
-    if (r.status === 422) alert("Неверный часовой пояс");
-    else { alert("Часовой пояс сохранён"); load(); }
+    if (r.status === 422) await uiAlert("Неверный часовой пояс");
+    else { await uiAlert("Часовой пояс сохранён"); load(); }
   }
 };
 

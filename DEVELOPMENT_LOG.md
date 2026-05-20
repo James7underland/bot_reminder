@@ -1080,3 +1080,53 @@ finishing) **завершена**: 9.1 custom recurrence, 9.2 smart-views,
 9.3 snooze, 9.4 manual reorder, 9.5 UI polish — все в `main`. Из
 изначально объявленного «вне области» осталось только sharing/
 multi-user и файловые вложения (отдельная фаза, если понадобится).
+
+---
+
+## Этап 38: Фаза 10.1 — стабильность Mini App и блокировки БД
+
+**Дата:** 2026-05-20
+
+**Описание:** Пользователь сообщил, что после Phase 9.5 в Mini App
+**периодически залипает менюшка** — невозможно выбрать цвет или
+ввести имя списка/задачи, помогает только перезапуск сервиса.
+Диагностика выявила два независимых источника проблемы.
+
+**(а) Нативные модалы в Telegram WebView.** В коде осталось 11 вызовов
+`window.alert/prompt/confirm` (создание/переименование/удаление списка,
+часовой пояс, валидация рекуррентности). В Telegram WebApp эти модалы
+поддерживаются нестабильно: фокус после закрытия не всегда
+возвращается в JS-event-loop, и следующий клик «не доходит» — UI
+выглядит замороженным до полного перезапуска. Решение: введены
+обёртки `uiAlert/uiConfirm/uiPrompt` поверх:
+- `Telegram.WebApp.showAlert(msg, cb)` — официальный non-blocking alert;
+- `Telegram.WebApp.showConfirm(msg, cb)` — confirm;
+- кастомный inline-overlay для prompt (у TG нет нативного), с
+  поддержкой Enter/Escape и Telegram BackButton как «Отмена».
+
+Все 11 вызовов переписаны на промис-based API. Дополнительно
+закрыта **утечка `<input type="color">`** в обработчике 🎨: если
+пользователь закрыл системный пикер без выбора, событие `change` не
+приходило и hidden-`<input>` оставался в DOM. Теперь cleanup
+происходит на `blur` и через safety-timeout 60 сек.
+
+**(б) SQLite без WAL и busy_timeout.** `bot_reminder` (планировщик
+APScheduler) и `bot_webapp` (FastAPI) — два процесса, оба пишут в
+одну SQLite. Без `journal_mode=WAL` писатель блокирует читателей
+эксклюзивно: запрос Mini App мог висеть на блокировке, пока
+планировщик не освободит лок. На запросах от UI это тоже выглядело
+как «менюшка зависла». Решение в `get_connection()`:
+- `PRAGMA journal_mode = WAL` (один писатель + N читателей параллельно;
+  устанавливается единожды и сохраняется в файле, повторный PRAGMA — no-op);
+- `PRAGMA busy_timeout = 5000` (ждать 5 сек, а не падать с
+  `OperationalError: database is locked`);
+- `sqlite3.connect(..., timeout=5.0)` (страховка на Python-уровне).
+
+**Результат:** 262 теста зелёных (+1: `test_db_connection_uses_wal_and
+_busy_timeout` проверяет журнал WAL, busy_timeout=5000 и foreign_keys=ON
+на каждом новом соединении); `bot.py`/`scheduler.py`/`tzutil.py` 100%,
+`database.py` 99%, `webapp.py` 99%, `config.py` 80%, TOTAL 99.72%;
+ruff чист.
+
+**Статус:** PR #35 → merge → авто-деплой. После раскатки пользователь
+проверит — если залипания исчезли, переходим к 10.2 (backup/restore).
