@@ -65,7 +65,7 @@ from database import (
     update_task_description,
 )
 from logsetup import setup_logging
-from tzutil import to_local, to_utc
+from tzutil import list_common_timezones, to_local, to_utc
 
 setup_logging("webapp")
 logger = logging.getLogger(__name__)
@@ -550,6 +550,18 @@ async def api_set_settings(
         raise HTTPException(status_code=422, detail="bad timezone") from None
     set_timezone(user_id, tz)
     return {"timezone": tz}
+
+
+@app.get("/api/timezones")
+async def api_timezones(
+    _user_id: int = Depends(current_user_id),
+) -> list[dict]:
+    """
+    Курируемый список общих часовых поясов с текущими смещениями
+    (Фаза 10.5). Авторизация требуется — endpoint не публичный, чтобы
+    не светить наличие сервиса посторонним.
+    """
+    return list_common_timezones()
 
 
 # --- Экспорт / импорт пользовательских данных (Фаза 10.2) ---

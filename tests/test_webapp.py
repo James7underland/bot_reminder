@@ -1288,3 +1288,48 @@ def test_db_connection_uses_wal_and_busy_timeout():
     assert mode.lower() == "wal", f"journal_mode is {mode!r}, expected wal"
     assert bt == 5000, f"busy_timeout is {bt}, expected 5000"
     assert fk == 1, "foreign_keys must remain ON"
+
+
+# --- Фаза 10.5: курируемый список часовых поясов ---
+
+def test_list_common_timezones_includes_moscow_and_utc():
+    """Базовая проверка содержимого: ключевые зоны на месте, структура валидна."""
+    from tzutil import list_common_timezones
+    zones = list_common_timezones()
+    by_tz = {z["tz"]: z for z in zones}
+    # Проверочные зоны в каждой группе:
+    assert "Europe/Moscow" in by_tz
+    assert by_tz["Europe/Moscow"]["group"] == "Россия"
+    assert by_tz["Europe/Moscow"]["label"] == "Москва"
+    assert "UTC" in by_tz
+    assert by_tz["UTC"]["offset"] == "UTC+00:00"
+    # У всех есть offset в формате UTC±HH:MM
+    import re
+    rx = re.compile(r"^UTC[+-]\d{2}:\d{2}$")
+    for z in zones:
+        assert rx.match(z["offset"]), z
+        assert isinstance(z["offset_minutes"], int)
+
+
+def test_list_common_timezones_sorted_west_to_east():
+    """Список отсортирован по смещению (запад → восток)."""
+    from tzutil import list_common_timezones
+    zones = list_common_timezones()
+    offsets = [z["offset_minutes"] for z in zones]
+    assert offsets == sorted(offsets)
+
+
+def test_list_common_timezones_all_valid_iana():
+    """Каждая `tz` — реально существующая зона (zoneinfo не падает)."""
+    from tzutil import list_common_timezones, valid_timezone
+    for z in list_common_timezones():
+        assert valid_timezone(z["tz"]), z["tz"]
+
+
+def test_api_timezones_requires_auth_and_returns_list(client):
+    # Без авторизации — 401
+    assert client.get("/api/timezones").status_code == 401
+    body = client.get("/api/timezones", headers=hdr()).json()
+    assert isinstance(body, list) and len(body) > 30
+    keys = set(body[0].keys())
+    assert {"tz", "label", "group", "offset", "offset_minutes"} <= keys
