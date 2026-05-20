@@ -74,6 +74,14 @@
   .modal-btns{display:flex;gap:8px;justify-content:flex-end;
     margin-top:12px}
   .modal-btns button{padding:8px 14px}
+  .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%)
+    translateY(20px);background:#222;color:#fff;padding:10px 14px;
+    border-radius:10px;font-size:14px;max-width:90vw;
+    box-shadow:0 4px 16px rgba(0,0,0,.35);opacity:0;
+    transition:opacity .2s, transform .2s;z-index:10000;pointer-events:none}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .toast.err{background:#b91c1c}
+  .toast.ok{background:#16a34a}
 </style>
 </head>
 <body>
@@ -182,25 +190,72 @@ function uiPrompt(title, defaultValue=""){
   });
 }
 
+// Лёгкий тост — не блокирует UI, не использует нативный alert.
+function uiToast(msg, kind = "err") {
+  const t = document.createElement("div");
+  t.className = "toast " + kind;
+  t.textContent = String(msg);
+  document.body.appendChild(t);
+  // Анимируем через requestAnimationFrame, чтобы успел применить transition.
+  requestAnimationFrame(() => t.classList.add("show"));
+  setTimeout(() => {
+    t.classList.remove("show");
+    setTimeout(() => t.parentNode && t.parentNode.removeChild(t), 250);
+  }, 4000);
+}
+
 async function api(path, opts={}) {
-  const r = await fetch("/api" + path, {
-    ...opts,
-    headers: {
-      "Content-Type": "application/json",
-      "X-Init-Data": INIT,
-      ...(opts.headers || {}),
-    },
-  });
+  let r;
+  try {
+    r = await fetch("/api" + path, {
+      ...opts,
+      headers: {
+        "Content-Type": "application/json",
+        "X-Init-Data": INIT,
+        ...(opts.headers || {}),
+      },
+    });
+  } catch (e) {
+    // Сеть/CORS/DNS — на этом этапе response ещё не получили.
+    uiToast("Нет сети: " + (e && e.message || e));
+    throw e;
+  }
   if (r.status === 401) {
     document.body.innerHTML =
       '<div class="muted">Откройте приложение из Telegram.</div>';
     throw new Error("unauthorized");
   }
-  return r.status === 204 ? null : r.json();
+  if (r.status === 204) return null;
+  // 5xx / 4xx (кроме 401) — показываем серверный detail, иначе сам код.
+  if (!r.ok && !opts._silent) {
+    let detail = `HTTP ${r.status}`;
+    try {
+      const body = await r.clone().json();
+      if (body && body.detail) detail = body.detail;
+    } catch { /* не JSON — оставляем код */ }
+    uiToast("Ошибка: " + detail);
+  }
+  return r.json().catch(() => null);
 }
 
 const $ = (s, el=document) => el.querySelector(s);
-let listId = "all";
+
+// --- Сохраняемое состояние UI (Phase 10.4): чтобы при повторном
+// открытии Mini App пользователя ждал тот же список и view, что был.
+// localStorage в Telegram WebApp работает; для приватности — ключи
+// с user_id-prefix не нужны, т.к. у каждого пользователя свой WebView.
+const _LS_KEY = "bot_reminder_ui";
+function loadUI() {
+  try { return JSON.parse(localStorage.getItem(_LS_KEY) || "{}"); }
+  catch { return {}; }
+}
+function saveUI(patch) {
+  const cur = loadUI();
+  Object.assign(cur, patch);
+  try { localStorage.setItem(_LS_KEY, JSON.stringify(cur)); } catch {}
+}
+const _UI = loadUI();
+let listId = _UI.listId || "all";
 
 function fmt(dt){ return dt ? dt.replace("T"," ").slice(0,16) : ""; }
 function toInput(s){ return s ? s.slice(0,16).replace(" ","T") : ""; }
@@ -483,15 +538,28 @@ async function addTask(){
 $("#addBtn").onclick = addTask;
 $("#newTask").addEventListener("keydown",
   e => { if (e.key === "Enter") addTask(); });
-$("#showDone").onchange = load;
-$("#viewSel").onchange = load;
-$("#sortSel").onchange = load;
+$("#showDone").onchange = () => {
+  saveUI({showDone: $("#showDone").checked});
+  load();
+};
+$("#viewSel").onchange = () => {
+  saveUI({view: $("#viewSel").value});
+  load();
+};
+$("#sortSel").onchange = () => {
+  saveUI({sort: $("#sortSel").value});
+  load();
+};
 let _searchT;
 $("#search").addEventListener("input", () => {
   clearTimeout(_searchT);
   _searchT = setTimeout(load, 350);
 });
-$("#listSel").onchange = e => { listId = e.target.value; load(); };
+$("#listSel").onchange = e => {
+  listId = e.target.value;
+  saveUI({listId: listId});
+  load();
+};
 $("#newList").onclick = async () => {
   const name = await uiPrompt("Название списка");
   if (name && name.trim()) {
@@ -610,6 +678,15 @@ $("#impFile").addEventListener("change", async (e) => {
     await uiAlert("Импорт не удался: " + (err.message || err));
   }
 });
+
+// Восстанавливаем сохранённые поля до первого load() — иначе сразу
+// пойдёт лишний запрос с дефолтами, а затем повторный с восстановленными.
+(function restoreUI() {
+  if (_UI.view) $("#viewSel").value = _UI.view;
+  if (_UI.sort) $("#sortSel").value = _UI.sort;
+  if (_UI.showDone) $("#showDone").checked = true;
+  // listId уже инициализирован из _UI; loadLists() сам выставит value.
+})();
 
 (async () => {
   try { await loadLists(); await load(); }
