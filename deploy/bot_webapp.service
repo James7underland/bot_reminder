@@ -12,6 +12,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/root/bot_reminder
+# Phase 10.3: файловые логи с ротацией (5×10 МБ) пишутся в LOG_DIR.
+Environment=LOG_DIR=/var/log/bot_reminder
+ExecStartPre=/usr/bin/install -d -m 0755 -o root -g root /var/log/bot_reminder
 ExecStart=/root/bot_reminder/.venv/bin/uvicorn webapp:app --host 127.0.0.1 --port 8080
 Restart=always
 RestartSec=5

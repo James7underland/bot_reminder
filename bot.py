@@ -40,16 +40,13 @@ from database import (
     set_timezone,
     update_task_description,
 )
+from logsetup import setup_logging
 from scheduler import setup_scheduler
 from tzutil import to_local, to_utc
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
-
-# Сторонние логгеры на INFO светят секреты: httpx печатает URL Telegram
-# API с токеном бота. Приглушаем их до WARNING (токен не попадает в логи).
+# Унифицированная настройка с ротацией файлов (см. logsetup.py).
+# `_NOISY_LOGGERS`/`quiet_third_party_loggers` сохранены как ре-экспорт
+# для совместимости с тестами (`test_quiet_third_party_loggers`).
 _NOISY_LOGGERS = ("httpx", "httpcore", "apscheduler", "telegram")
 
 
@@ -59,7 +56,7 @@ def quiet_third_party_loggers() -> None:
         logging.getLogger(name).setLevel(logging.WARNING)
 
 
-quiet_third_party_loggers()
+setup_logging("bot")
 logger = logging.getLogger(__name__)
 
 # Поддерживаются ТОЛЬКО явные форматы даты-времени (решение №4 — без

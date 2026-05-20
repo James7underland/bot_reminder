@@ -509,5 +509,20 @@ snooze, ручной порядок, мелочи UI. Вне scope: файлов
   tasks, плохой цвет) пропускаются, не падая. Frontend: 📦 скачивает
   `reminder-backup-<ts>.json`, ↩ открывает файл-пикер и спрашивает
   «replace» vs «merge». 269 тестов.
-- 10.3 Здоровье и логирование (DB-ping в `/healthz`, ротация логов,
-  базовые метрики количества задач/запросов).
+- **10.3 ✅ (PR #37):** Здоровье и логирование.
+  (a) `/healthz` теперь делает `SELECT 1` через `db_ping`, отдаёт
+  `{ok, db, uptime_seconds, tasks_total, tasks_active, lists_total,
+  users}`; если БД не отвечает → HTTP 503 (внешний монитор/systemd
+  таймер видит). При отказе `get_global_counts` 200 OK не ломается,
+  только лог-варнинг.
+  (b) `GET /api/stats` — сводка для текущего пользователя
+  (`active`/`completed`/`important`/`lists`/`steps_open`/
+  `oldest_open_at`); под initData-авторизацией.
+  (c) `logsetup.setup_logging(name)` — единая идемпотентная настройка:
+  stdout-хендлер (journald) + RotatingFileHandler 5×10 МБ при заданном
+  env `LOG_DIR`. Шумные сторонние логгеры (httpx/httpcore/apscheduler/
+  telegram) глушатся до WARNING (httpx пишет URL Telegram API с
+  токеном — критично не выводить на INFO). `bot.py`/`webapp.py`
+  перевешены на `setup_logging`. systemd-юниты (`bot_reminder.service`,
+  `bot_webapp.service`) получают `Environment=LOG_DIR=...` и
+  `ExecStartPre` для создания каталога. 279 тестов.

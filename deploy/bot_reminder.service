@@ -12,6 +12,8 @@ Type=simple
 User=__USER__
 WorkingDirectory=/home/__USER__/bot_reminder
 EnvironmentFile=/home/__USER__/bot_reminder/.env
+# Phase 10.3: файловые логи с ротацией (5×10 МБ) пишутся в LOG_DIR.
+Environment=LOG_DIR=/home/__USER__/bot_reminder/logs
 ExecStart=/home/__USER__/bot_reminder/.venv/bin/python bot.py
 Restart=always
 RestartSec=5
