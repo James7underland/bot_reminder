@@ -1372,3 +1372,66 @@ rollback на сбое, API 200/404/409); ruff чист; TOTAL **99.70%**.
 
 **Статус:** PR #40 → merge → авто-деплой. Дальше — 10.7 (undo для
 удаления) и 10.8 (виджет статистики).
+
+---
+
+## Этап 44: Фаза 10.7 — undo для удаления списка
+
+**Дата:** 2026-05-21
+
+**Описание:** Ветка `phase/10.7-undo-delete`. До этого PR удаление
+списка было необратимым: `delete_list` cascade'ом отвязывал задачи
+и `DELETE FROM lists`. Теперь soft-delete с 24-часовым окном
+восстановления.
+
+**БД.** Колонка `lists.deleted_at TEXT` (миграция идемпотентна,
+`CREATE TABLE` тоже обновлён). `delete_list(id)` теперь ставит
+`deleted_at = CURRENT_TIMESTAMP` только если запись активна
+(`AND deleted_at IS NULL`) — повторный delete даёт `False`.
+`get_lists(user_id, include_deleted=False)` фильтрует удалённые по
+умолчанию; `include_deleted=True` нужен только для endpoint
+восстановления. Новые функции:
+- `restore_list(id)` — снимает `deleted_at`. False, если не было
+  удалено (idempotency).
+- `purge_deleted_lists(older_than_hours=24)` — физическое удаление:
+  одной транзакцией NULL'ит `tasks.list_id` для всех затронутых
+  списков и `DELETE FROM lists`. Использует `datetime('now', '-N hours')`
+  для сравнения с `deleted_at`. Rollback на сбое. Возвращает счётчик.
+
+**Scheduler.** В `scheduler.setup_scheduler()` добавлен второй job
+`purge_deleted` (`interval, hours=1`) → `_purge_old_soft_deletes()`.
+Обёртка `_purge_old_soft_deletes` глотает любые исключения с
+`logger.error` — иначе APScheduler пометил бы job сломанным.
+
+**Импорт.** `import_user_data` в merge-режиме теперь явно фильтрует
+по `deleted_at IS NULL` при сопоставлении имён списков, чтобы импорт
+не оживлял удалённый список как побочный эффект (пользователь явно
+его удалил — импорт должен создать новый).
+
+**API.** `POST /api/lists/{id}/restore` (initData auth). Использует
+`get_lists(include_deleted=True)` для определения принадлежности и
+статуса: 404, если списка нет / он чужой / он не был удалён.
+Существующий `DELETE /api/lists/{id}` сохраняет интерфейс, но теперь
+выполняет soft-delete.
+
+**Frontend.** Замена `uiConfirm` на оптимистичный паттерн «удали +
+покажи undo»:
+- сразу скрываем список (`load()`),
+- `uiUndoToast(text, action, ms)` показывает тост с кнопкой
+  «Отменить» (8 сек), при клике зовёт `POST /restore`;
+- по таймауту тост исчезает без действия — у пользователя остаётся
+  24 часа до физического purge'а (но через UI оттуда уже не
+  достать; это сознательно — UI отражает «удалено», а 24 часа —
+  страховка на случай ошибочного DELETE).
+- Тост стилизован под dark, кнопка action голубая (`#60a5fa`).
+
+**Тесты.** +8: soft-delete не дёргает задачи, idempotent повторный
+delete, restore возвращает + idempotent; `purge_deleted_lists`
+удаляет старые и отвязывает задачи; `import_user_data` merge не
+переиспользует soft-deleted список; API restore 200/404 (своя
+активная, чужая, своя удалённая); scheduler регистрирует оба job'а;
+purge-wrapper глотает ошибки и логирует. Обновлён `test_delete_list_*`
+под новую семантику. 294 теста зелёные, TOTAL **99.47%**, ruff чист.
+
+**Статус:** PR #41 → merge → авто-деплой. Дальше — 10.8 (виджет
+статистики в Mini App).

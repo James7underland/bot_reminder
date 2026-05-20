@@ -509,6 +509,18 @@ snooze, ручной порядок, мелочи UI. Вне scope: файлов
   tasks, плохой цвет) пропускаются, не падая. Frontend: 📦 скачивает
   `reminder-backup-<ts>.json`, ↩ открывает файл-пикер и спрашивает
   «replace» vs «merge». 269 тестов.
+- **10.7 ✅ (PR #41):** Undo для удаления списка. БД: колонка
+  `lists.deleted_at TEXT` (миграция), `delete_list` теперь
+  soft-delete (ставит `deleted_at = now()`, задачи сохраняют
+  `list_id` на время окна отмены). `get_lists` исключает удалённые
+  по умолчанию, `include_deleted=True` для restore-эндпоинта.
+  `restore_list(id)` снимает пометку. `purge_deleted_lists(hours=24)`
+  физически удаляет старые с отвязкой задач — вызывается раз в час
+  через новый scheduler job `purge_deleted`. `import_user_data` в
+  merge-режиме игнорирует soft-deleted списки по имени. API:
+  `POST /api/lists/{id}/restore` (404 на чужую/активную). Frontend:
+  при удалении списка вместо confirm — `uiUndoToast` с кнопкой
+  «Отменить» на 8 сек (вызывает restore). 294 теста.
 - **10.6 ✅ (PR #40):** Drag-and-drop переупорядочивание. `database.
   reorder_task(task_id, after_task_id)` ставит задачу сразу после
   указанной в той же подгруппе (user + list), `after=None` → в начало;

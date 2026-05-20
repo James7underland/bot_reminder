@@ -16,6 +16,7 @@ from database import (
     get_overdue_tasks,
     mark_overdue_notified,
     mark_reminder_sent,
+    purge_deleted_lists,
 )
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,18 @@ async def check_and_send_reminders(bot, now: datetime | None = None) -> int:
     return sent
 
 
+def _purge_old_soft_deletes() -> None:
+    """
+    Phase 10.7: раз в час физически удаляет списки, помеченные как
+    deleted дольше 24 часов. Сам purge_deleted_lists ловит счётчик и
+    логирует; здесь — обёртка-job без аргументов.
+    """
+    try:
+        purge_deleted_lists(older_than_hours=24)
+    except Exception as e:    # лог + не падать (job переподнимется)
+        logger.error("purge_deleted_lists failed: %s", e)
+
+
 def setup_scheduler(application) -> AsyncIOScheduler:
     """
     Создаёт планировщик и привязывает его старт/остановку к жизненному
@@ -81,6 +94,14 @@ def setup_scheduler(application) -> AsyncIOScheduler:
         seconds=SCHEDULER_CHECK_INTERVAL,
         args=[application.bot],
         id="reminders",
+        replace_existing=True,
+    )
+    # Phase 10.7: раз в час чистим soft-deleted списки старше 24 ч.
+    scheduler.add_job(
+        _purge_old_soft_deletes,
+        trigger="interval",
+        hours=1,
+        id="purge_deleted",
         replace_existing=True,
     )
 

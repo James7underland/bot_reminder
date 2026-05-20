@@ -1390,7 +1390,7 @@ def test_db_reorder_task_rolls_back_on_db_error(monkeypatch):
     import database
     from database import add_task, get_tasks, reorder_task
     a = add_task(405, "a")
-    b = add_task(405, "b")
+    add_task(405, "b")
     c = add_task(405, "c")
     before = [t["id"] for t in get_tasks(405)]
 
@@ -1484,3 +1484,115 @@ def test_api_reorder(client):
     # c — без списка, d — в L → 409
     assert client.post(f"/api/tasks/{c}/reorder",
                       json={"after": d}, headers=hdr()).status_code == 409
+
+
+# --- Фаза 10.7: soft-delete + restore + purge для списков ---
+
+def test_db_restore_list_undoes_soft_delete():
+    from database import (
+        create_list,
+        delete_list,
+        get_lists,
+        restore_list,
+    )
+    lid = create_list(500, "Work")
+    assert delete_list(lid) is True
+    assert get_lists(500) == []
+    # Восстанавливаем
+    assert restore_list(lid) is True
+    visible = get_lists(500)
+    assert len(visible) == 1 and visible[0]["id"] == lid
+    # Уже не deleted → повторный restore False (idempotency)
+    assert restore_list(lid) is False
+    # Несуществующий
+    assert restore_list(999999) is False
+
+
+def test_db_purge_deleted_lists_after_window():
+    """
+    purge_deleted_lists удаляет списки, помеченные deleted дольше N
+    часов. Тест ставит deleted_at вручную в прошлое.
+    """
+    from database import (
+        add_task,
+        assign_task_to_list,
+        create_list,
+        delete_list,
+        get_connection,
+        get_lists,
+        get_tasks_by_list,
+        purge_deleted_lists,
+    )
+    fresh = create_list(501, "fresh")
+    old = create_list(501, "old")
+    tid = add_task(501, "t")
+    assign_task_to_list(tid, old)
+    assert delete_list(fresh) is True
+    assert delete_list(old) is True
+    # Сдвигаем deleted_at у `old` на 2 дня назад напрямую в БД.
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE lists SET deleted_at = datetime('now', '-2 days') "
+        "WHERE id = ?", (old,),
+    )
+    conn.commit()
+    conn.close()
+    # Чистим: удалится только `old`, задача отвязалась.
+    purged = purge_deleted_lists(older_than_hours=24)
+    assert purged == 1
+    # Прошёл — fresh ещё здесь (только что удалён)
+    all_after = get_lists(501, include_deleted=True)
+    assert {x["id"] for x in all_after} == {fresh}
+    # Задача из old теперь без списка
+    assert [t["id"] for t in get_tasks_by_list(501, None)] == [tid]
+    # Повторный purge — 0
+    assert purge_deleted_lists(older_than_hours=24) == 0
+
+
+def test_api_restore_list(client):
+    lid = client.post(
+        "/api/lists", json={"name": "L"}, headers=hdr()
+    ).json()["id"]
+    # Активный → restore нельзя
+    assert client.post(
+        f"/api/lists/{lid}/restore", headers=hdr()
+    ).status_code == 404
+    # Удаляем (soft)
+    assert client.request(
+        "DELETE", f"/api/lists/{lid}", headers=hdr()
+    ).json() == {"ok": True}
+    assert client.get("/api/lists", headers=hdr()).json() == []
+    # Чужой → 404
+    assert client.post(
+        f"/api/lists/{lid}/restore", headers=hdr(99)
+    ).status_code == 404
+    # Свой → 200, появляется в /api/lists
+    r = client.post(f"/api/lists/{lid}/restore", headers=hdr())
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    assert [x["name"] for x in client.get(
+        "/api/lists", headers=hdr()).json()] == ["L"]
+
+
+def test_db_import_merge_skips_soft_deleted_lists():
+    """
+    В merge-режиме soft-deleted список НЕ переиспользуется по имени —
+    импорт создаёт новый. Иначе восстановление списка было бы скрытым
+    побочным эффектом импорта.
+    """
+    from database import (
+        create_list,
+        delete_list,
+        export_user_data,
+        get_lists,
+        import_user_data,
+    )
+    lid = create_list(502, "L")
+    payload = export_user_data(502)
+    # Удаляем (soft).
+    delete_list(lid)
+    counts = import_user_data(502, payload, mode="merge")
+    assert counts["lists"] == 1   # создан новый, а не «оживлён» старый
+    # И deleted'й, и новый присутствуют в полной выборке.
+    all_lists = get_lists(502, include_deleted=True)
+    assert len([x for x in all_lists if x["name"] == "L"]) == 2
