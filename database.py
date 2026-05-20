@@ -1165,3 +1165,234 @@ def move_task_up(task_id: int) -> bool:
 def move_task_down(task_id: int) -> bool:
     """Меняет местами задачу со следующим активным соседом того же списка."""
     return _move_task(task_id, 1)
+
+
+# --- Экспорт / импорт (Фаза 10.2) ---
+
+EXPORT_VERSION = 1
+
+# Поля задачи, которые попадают в экспорт. ID и user_id опускаются:
+# при импорте задачи получают новые ID, чтобы не конфликтовать с
+# существующими данными. order_index сохраняется (восстанавливает порядок).
+_EXPORT_TASK_FIELDS = (
+    "description", "due_date", "completed", "created_at",
+    "reminder_sent", "recurrence", "important", "notes", "myday_date",
+    "remind_before", "deadline", "reminder_at", "overdue_notified",
+    "order_index",
+)
+
+
+def export_user_data(user_id: int) -> dict:
+    """
+    Полный снимок данных пользователя — для бэкапа/переноса. Один
+    проход по БД: список списков, задачи (с привязкой к именам списков,
+    а не id, чтобы импорт мог их пересоздать), подзадачи внутри каждой
+    задачи, настройки. Версия схемы — `EXPORT_VERSION`.
+    """
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    # Списки
+    cursor.execute(
+        "SELECT id, name, color, created_at FROM lists "
+        "WHERE user_id = ? ORDER BY created_at, id",
+        (user_id,),
+    )
+    lists_rows = cursor.fetchall()
+    id_to_name = {row["id"]: row["name"] for row in lists_rows}
+    lists = [{"name": r["name"], "color": r["color"],
+              "created_at": r["created_at"]} for r in lists_rows]
+    # Задачи
+    cursor.execute(
+        "SELECT * FROM tasks WHERE user_id = ? "
+        "ORDER BY order_index, created_at, id",
+        (user_id,),
+    )
+    task_rows = cursor.fetchall()
+    tasks: list[dict] = []
+    task_ids: list[int] = []
+    for r in task_rows:
+        t = {k: r[k] for k in _EXPORT_TASK_FIELDS}
+        # list_id → list_name (None для «без списка»)
+        t["list_name"] = id_to_name.get(r["list_id"])
+        # Совместимость с дефолтом WAL/CREATE: важный/выполнено как bool.
+        t["completed"] = bool(t["completed"])
+        t["important"] = bool(t["important"])
+        t["_id"] = r["id"]
+        tasks.append(t)
+        task_ids.append(r["id"])
+    # Подзадачи. Запрашиваем разом, фильтруем по списку id.
+    steps_by_task: dict[int, list[dict]] = {tid: [] for tid in task_ids}
+    if task_ids:
+        placeholders = ",".join("?" * len(task_ids))
+        cursor.execute(
+            "SELECT task_id, description, completed, created_at "
+            f"FROM steps WHERE task_id IN ({placeholders}) "
+            "ORDER BY task_id, created_at, id",
+            task_ids,
+        )
+        for srow in cursor.fetchall():
+            steps_by_task[srow["task_id"]].append({
+                "description": srow["description"],
+                "completed": bool(srow["completed"]),
+                "created_at": srow["created_at"],
+            })
+    # Прикрепляем подзадачи к задачам и убираем внутренний `_id`.
+    for t in tasks:
+        t["steps"] = steps_by_task.get(t.pop("_id"), [])
+    # Настройки пользователя
+    cursor.execute(
+        "SELECT timezone FROM user_settings WHERE user_id = ?", (user_id,)
+    )
+    tz_row = cursor.fetchone()
+    tz = tz_row["timezone"] if tz_row else "UTC"
+    conn.close()
+    return {
+        "version": EXPORT_VERSION,
+        "exported_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "user": {"id": user_id, "timezone": tz},
+        "lists": lists,
+        "tasks": tasks,
+    }
+
+
+def _validate_export_payload(payload: dict) -> str | None:
+    """Возвращает строку с ошибкой, либо None если payload валиден."""
+    if not isinstance(payload, dict):
+        return "payload must be an object"
+    ver = payload.get("version")
+    if ver != EXPORT_VERSION:
+        return f"unsupported version (expected {EXPORT_VERSION}, got {ver!r})"
+    if not isinstance(payload.get("lists"), list):
+        return "missing 'lists' array"
+    if not isinstance(payload.get("tasks"), list):
+        return "missing 'tasks' array"
+    return None
+
+
+def import_user_data(
+    user_id: int, payload: dict, *, mode: str = "merge"
+) -> dict:
+    """
+    Импортирует данные из формата `export_user_data`.
+
+    `mode="merge"` — добавляет новые задачи и списки рядом с существующими
+    (списки сопоставляются по имени; новые задачи дозаписываются,
+    дубликаты не отсеиваются — пользователь сам решит, что удалить).
+    `mode="replace"` — сначала удаляет все списки/задачи/подзадачи
+    пользователя, потом импортирует.
+
+    Возвращает `{"lists": N, "tasks": M, "steps": K}` — счётчики добавленных
+    записей. Поднимает `ValueError` при невалидном payload — caller (API
+    эндпоинт) переводит его в HTTP 422.
+    """
+    err = _validate_export_payload(payload)
+    if err:
+        raise ValueError(err)
+    if mode not in {"merge", "replace"}:
+        raise ValueError(f"bad mode: {mode!r}")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("BEGIN")
+        if mode == "replace":
+            # FK ON DELETE CASCADE на steps → удалятся вместе с задачами.
+            cursor.execute("DELETE FROM tasks WHERE user_id = ?", (user_id,))
+            cursor.execute("DELETE FROM lists WHERE user_id = ?", (user_id,))
+
+        # Списки: имя → id, переиспользуем существующие в merge.
+        cursor.execute(
+            "SELECT id, name FROM lists WHERE user_id = ?", (user_id,)
+        )
+        name_to_id = {row[1]: row[0] for row in cursor.fetchall()}
+        lists_added = 0
+        for lst in payload["lists"]:
+            name = (lst.get("name") or "").strip()
+            if not name:
+                continue
+            if name in name_to_id:
+                continue
+            color = lst.get("color") or "#0088CC"
+            if not is_valid_color(color):
+                color = "#0088CC"
+            cursor.execute(
+                "INSERT INTO lists (user_id, name, color) VALUES (?, ?, ?)",
+                (user_id, name, color),
+            )
+            name_to_id[name] = cursor.lastrowid
+            lists_added += 1
+
+        # Задачи + подзадачи. order_index пересчитываем относительно
+        # текущего max'а пользователя, чтобы импорт не конфликтовал с
+        # уже существующими номерами в merge-режиме.
+        cursor.execute(
+            "SELECT COALESCE(MAX(order_index), 0) FROM tasks "
+            "WHERE user_id = ?", (user_id,),
+        )
+        base_idx = cursor.fetchone()[0] or 0
+        tasks_added = 0
+        steps_added = 0
+        for i, t in enumerate(payload["tasks"], start=1):
+            if not isinstance(t, dict):
+                continue
+            description = (t.get("description") or "").strip()
+            if not description:
+                continue
+            list_id = name_to_id.get(t.get("list_name")) if t.get("list_name") else None
+            new_order = base_idx + i
+            cursor.execute(
+                "INSERT INTO tasks (user_id, description, due_date, "
+                "completed, created_at, reminder_sent, list_id, "
+                "recurrence, important, notes, myday_date, remind_before, "
+                "deadline, reminder_at, overdue_notified, order_index) "
+                "VALUES (?,?,?,?,COALESCE(?, CURRENT_TIMESTAMP),?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    user_id, description, t.get("due_date"),
+                    1 if t.get("completed") else 0, t.get("created_at"),
+                    1 if t.get("reminder_sent") else 0, list_id,
+                    t.get("recurrence"),
+                    1 if t.get("important") else 0, t.get("notes"),
+                    t.get("myday_date"), t.get("remind_before"),
+                    t.get("deadline"), t.get("reminder_at"),
+                    1 if t.get("overdue_notified") else 0, new_order,
+                ),
+            )
+            new_task_id = cursor.lastrowid
+            tasks_added += 1
+            for step in (t.get("steps") or []):
+                sdesc = (step.get("description") or "").strip()
+                if not sdesc:
+                    continue
+                cursor.execute(
+                    "INSERT INTO steps (task_id, description, completed, "
+                    "created_at) VALUES (?, ?, ?, "
+                    "COALESCE(?, CURRENT_TIMESTAMP))",
+                    (new_task_id, sdesc,
+                     1 if step.get("completed") else 0,
+                     step.get("created_at")),
+                )
+                steps_added += 1
+
+        # Часовой пояс — только если в payload явно задан и
+        # отличается от UTC по умолчанию.
+        user_info = payload.get("user") or {}
+        tz = (user_info.get("timezone") or "").strip()
+        if tz and valid_timezone(tz):
+            cursor.execute(
+                "INSERT INTO user_settings (user_id, timezone) "
+                "VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET timezone=?",
+                (user_id, tz, tz),
+            )
+
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    logger.info(
+        "import user=%s mode=%s lists=%d tasks=%d steps=%d",
+        user_id, mode, lists_added, tasks_added, steps_added,
+    )
+    return {"lists": lists_added, "tasks": tasks_added, "steps": steps_added}

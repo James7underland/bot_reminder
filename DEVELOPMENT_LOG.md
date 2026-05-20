@@ -1130,3 +1130,56 @@ ruff чист.
 
 **Статус:** PR #35 → merge → авто-деплой. После раскатки пользователь
 проверит — если залипания исчезли, переходим к 10.2 (backup/restore).
+
+---
+
+## Этап 39: Фаза 10.2 — экспорт / импорт пользовательских данных
+
+**Дата:** 2026-05-20
+
+**Описание:** Ветка `phase/10.2-backup-export`. Дополняет уже
+существующий cron-бэкап (`deploy/backup.sh` — sqlite3 `.backup`,
+ежедневно в 3:00, 14 копий) **пользовательским** экспортом/импортом,
+чтобы данные можно было унести/восстановить без доступа к серверу.
+
+**Backend.** `export_user_data(user_id)` собирает полный снимок
+(version=1): списки (имя+цвет+created_at), задачи (все 14 значимых
+полей: from `description` до `order_index`; `list_id` заменён на
+`list_name` — id-привязка не выживает миграцию между БД), подзадачи
+встроены в задачу как массив `steps`, часовой пояс в `user`. Один
+проход по БД с предзагрузкой шагов в `dict[task_id -> list]`, чтобы
+не делать N+1.
+
+`import_user_data(user_id, payload, mode)`:
+- `merge` (default) — существующие списки пользователя достаются по
+  имени и переиспользуются; задачи дозаписываются с пересчётом
+  `order_index = max+i`, чтобы не конфликтовать с уже имеющимися;
+- `replace` — сначала `DELETE FROM tasks/lists WHERE user_id=?`
+  (steps удаляются каскадом по ON DELETE CASCADE).
+- Вся вставка — в одной транзакции (`BEGIN`/`COMMIT`/`ROLLBACK`):
+  сбой посреди не оставляет частичных данных.
+- Дефенсивные пропуски (пустое имя, не-dict в `tasks`, кривой цвет —
+  fallback к `#0088CC`) — без падения.
+
+Pydantic `ImportBody{payload: dict, mode: str = "merge"}`. API:
+`GET /api/export` → JSON-снимок; `POST /api/import` → 200 со счётчиком
+`{lists, tasks, steps}` или 422 на битый payload/неизвестный mode.
+
+**Frontend.** Две кнопки в баре списков:
+- 📦 «Экспорт» — `api("/export")` → `Blob` → `<a download>` с именем
+  `reminder-backup-<exported_at>.json`; затем `uiAlert` со счётчиком.
+- ↩ «Импорт» — спрятанный `<input type="file" accept="application/
+  json">`, после выбора — `JSON.parse`, `uiConfirm` «replace vs merge»,
+  POST `/import`, `uiAlert` с результатом, refresh.
+
+**Результат:** 269 тестов зелёные (+6: round-trip export→import между
+двумя user_id, `merge` не дублирует список с тем же именем, `replace`
+вычищает + импортирует, дефенсивные пропуски malformed-элементов,
+rollback при ошибке в середине (через `monkeypatch`-обёртку
+sqlite3.Cursor), валидация payload — все плохие формы кидают
+ValueError, API endpoint 200/422); `bot.py`/`scheduler.py`/`tzutil.py`
+100%, `database.py`/`webapp.py` 99%, `config.py` 80%, TOTAL 99.74%;
+ruff чист.
+
+**Статус:** PR #36 → merge → авто-деплой. После — 10.3 (здоровье +
+ротация логов).

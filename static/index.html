@@ -84,7 +84,10 @@
   <button id="renList" class="ghost" title="Переименовать">✎</button>
   <button id="clrList" class="ghost" title="Цвет">🎨</button>
   <button id="delList" class="ghost" title="Удалить">🗑</button>
-  <button id="tzBtn" class="ghost">⚙</button>
+  <button id="tzBtn" class="ghost" title="Часовой пояс">⚙</button>
+  <button id="expBtn" class="ghost" title="Экспорт">📦</button>
+  <button id="impBtn" class="ghost" title="Импорт">↩</button>
+  <input id="impFile" type="file" accept="application/json" hidden>
 </div>
 <div class="bar">
   <input id="newTask" placeholder="Новая задача…" autocomplete="off">
@@ -561,6 +564,52 @@ $("#tzBtn").onclick = async () => {
     else { await uiAlert("Часовой пояс сохранён"); load(); }
   }
 };
+
+// --- Экспорт / импорт (Фаза 10.2) ---
+$("#expBtn").onclick = async () => {
+  const data = await api("/export");
+  const blob = new Blob(
+    [JSON.stringify(data, null, 2)], {type: "application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const stamp = (data.exported_at || "").replace(/[:T]/g, "-").slice(0, 19);
+  a.href = url;
+  a.download = `reminder-backup-${stamp || "now"}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  await uiAlert(`Скачан бэкап: ${data.tasks.length} задач(и), `
+                + `${data.lists.length} список(ов).`);
+};
+$("#impBtn").onclick = () => $("#impFile").click();
+$("#impFile").addEventListener("change", async (e) => {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = "";   // на случай повторного выбора того же файла
+  if (!f) return;
+  let payload;
+  try {
+    payload = JSON.parse(await f.text());
+  } catch {
+    await uiAlert("Не удалось прочитать файл (не похоже на JSON).");
+    return;
+  }
+  const replace = await uiConfirm(
+    "OK = ЗАМЕНИТЬ все ваши задачи и списки данными из файла "
+    + "(удалит текущие). Cancel = добавить рядом (merge)."
+  );
+  const mode = replace ? "replace" : "merge";
+  try {
+    const r = await api("/import", {method:"POST",
+      body: JSON.stringify({payload, mode})});
+    await uiAlert(
+      `Импортировано: ${r.tasks} задач(и), ${r.lists} список(ов), `
+      + `${r.steps} подзадач(и). Режим: ${mode}.`);
+    await loadLists(); load();
+  } catch (err) {
+    await uiAlert("Импорт не удался: " + (err.message || err));
+  }
+});
 
 (async () => {
   try { await loadLists(); await load(); }
