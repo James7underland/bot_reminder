@@ -17,9 +17,23 @@ logger = logging.getLogger(__name__)
 
 
 def get_connection():
-    """Создает и возвращает соединение с базой данных. Включает поддержку внешних ключей."""
-    conn = sqlite3.connect(DATABASE_PATH)
+    """
+    Создаёт соединение с БД. Включает:
+    - `foreign_keys=ON` — каскадное удаление;
+    - `journal_mode=WAL` — несколько читателей + один писатель
+      параллельно. Снимает контеншн между `bot_reminder` (планировщик)
+      и `bot_webapp` (HTTP API), которые пишут в одну БД и без WAL
+      периодически блокировали друг друга, проявляясь в Mini App как
+      «зависшая» менюшка (запросы зависали на блокировке БД).
+    - `busy_timeout=5000` — ждать до 5 сек на залоченных страницах
+      вместо мгновенного `OperationalError: database is locked`.
+    WAL устанавливается единожды и сохраняется в самом файле БД —
+    повторный PRAGMA на каждом коннекте дёшев (no-op, если уже WAL).
+    """
+    conn = sqlite3.connect(DATABASE_PATH, timeout=5.0)
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 5000")
     return conn
 
 def init_db():

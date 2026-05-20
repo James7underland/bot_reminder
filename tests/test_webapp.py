@@ -844,3 +844,25 @@ def test_api_list_patch_color(client):
     assert client.patch(
         f"/api/lists/{lid}", json={"color": "#000000"}, headers=hdr(99)
     ).status_code == 404
+
+
+# --- Этап 38: стабильность (WAL + busy_timeout) ---
+
+def test_db_connection_uses_wal_and_busy_timeout():
+    """
+    Без WAL писатель блокирует всех читателей — на VPS это проявлялось
+    как «залипшая» менюшка в Mini App, когда scheduler и webapp
+    одновременно касаются БД. busy_timeout=5000 страхует от
+    мгновенного OperationalError.
+    """
+    from database import get_connection
+    conn = get_connection()
+    try:
+        mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        bt = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+        fk = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    finally:
+        conn.close()
+    assert mode.lower() == "wal", f"journal_mode is {mode!r}, expected wal"
+    assert bt == 5000, f"busy_timeout is {bt}, expected 5000"
+    assert fk == 1, "foreign_keys must remain ON"
