@@ -1270,6 +1270,17 @@ def test_logsetup_file_handler_failure_is_soft(tmp_path, monkeypatch):
         root.handlers[:] = saved
 
 
+def test_db_update_task_description_missing_returns_false():
+    """Phase 11.1: контракт сохраняется и без чат-команд."""
+    from database import update_task_description
+    assert update_task_description(999999, "x") is False
+
+
+def test_db_mark_task_undone_missing_returns_false():
+    from database import mark_task_undone
+    assert mark_task_undone(999999) is False
+
+
 def test_db_connection_uses_wal_and_busy_timeout():
     """
     Без WAL писатель блокирует всех читателей — на VPS это проявлялось

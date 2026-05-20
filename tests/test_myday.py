@@ -1,8 +1,11 @@
-"""Фаза 5.6: тесты «Мой день»."""
-import sqlite3
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+"""Фаза 5.6: тесты «Мой день» (БД-слой).
 
-import bot
+С Phase 11.1 чат-команды убраны. Сценарии My Day в Mini App — в
+`test_webapp.py`.
+"""
+import sqlite3
+from unittest.mock import patch
+
 import database
 from database import (
     add_task,
@@ -14,23 +17,6 @@ from database import (
 
 DAY = "2026-05-17"
 OTHER = "2026-05-18"
-
-
-def make_update(user_id=42):
-    update = MagicMock()
-    update.effective_user.id = user_id
-    update.message.reply_text = AsyncMock()
-    return update
-
-
-def make_context(args):
-    ctx = MagicMock()
-    ctx.args = args
-    return ctx
-
-
-def reply(update):
-    return update.message.reply_text.call_args.args[0]
 
 
 # --- слой БД ---
@@ -84,68 +70,3 @@ def test_init_db_migrates_myday(tmp_path):
     assert "myday_date" in cols
 
 
-# --- хендлеры ---
-
-async def test_myday_list_empty():
-    u = make_update()
-    with patch.object(bot, "get_myday", return_value=[]):
-        await bot.myday_command(u, make_context([]))
-    assert "ничего нет" in reply(u).lower()
-
-
-async def test_myday_list_renders():
-    u = make_update()
-    tasks = [
-        {"id": 1, "description": "A", "due_date": "2026-05-17 09:00:00",
-         "important": True},
-        {"id": 2, "description": "B", "due_date": None, "important": False},
-    ]
-    with patch.object(bot, "get_myday", return_value=tasks):
-        await bot.myday_command(u, make_context([]))
-    out = reply(u)
-    assert "Мой день:" in out
-    assert "[важно] A" in out and "2026-05-17 09:00:00" in out
-    assert "2. B" in out
-
-
-async def test_myday_add_success():
-    u = make_update()
-    with patch.object(bot, "add_to_myday", return_value=True) as m:
-        await bot.myday_command(u, make_context(["add", "7"]))
-    m.assert_called_once_with(7, ANY)
-    assert "добавлена" in reply(u).lower()
-
-
-async def test_myday_add_not_found():
-    u = make_update()
-    with patch.object(bot, "add_to_myday", return_value=False):
-        await bot.myday_command(u, make_context(["add", "7"]))
-    assert "не найдена" in reply(u).lower()
-
-
-async def test_myday_remove_and_alias():
-    u = make_update()
-    with patch.object(bot, "remove_from_myday", return_value=True) as m:
-        await bot.myday_command(u, make_context(["remove", "7"]))
-    m.assert_called_once_with(7)
-    assert "убрана" in reply(u).lower()
-
-    u = make_update()
-    with patch.object(bot, "remove_from_myday", return_value=True) as m:
-        await bot.myday_command(u, make_context(["rm", "9"]))
-    m.assert_called_once_with(9)
-
-
-async def test_myday_subcommand_validation():
-    u = make_update()
-    await bot.myday_command(u, make_context(["add"]))
-    assert "Использование" in reply(u)
-
-    u = make_update()
-    await bot.myday_command(u, make_context(["add", "abc"]))
-    assert "числом" in reply(u).lower()
-
-    u = make_update()
-    with patch.object(bot, "remove_from_myday", return_value=False):
-        await bot.myday_command(u, make_context(["remove", "7"]))
-    assert "не найдена" in reply(u).lower()

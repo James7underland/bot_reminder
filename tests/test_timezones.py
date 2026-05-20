@@ -1,31 +1,12 @@
-"""Фаза 5.8: тесты часовых поясов."""
-from unittest.mock import AsyncMock, MagicMock
+"""Фаза 5.8: тесты часовых поясов (БД + tzutil).
 
+С Phase 11.1 чат-команды убраны — интеграционные UTC↔локаль
+сценарии живут в `test_webapp.py` через Mini App API.
+"""
 import pytest
 
-import bot
-from database import add_task, get_tasks, get_timezone, set_timezone
+from database import get_timezone, set_timezone
 from tzutil import to_local, to_utc, valid_timezone
-
-
-def make_update(user_id=42, text=None):
-    update = MagicMock()
-    update.effective_user.id = user_id
-    if text is not None:
-        update.message.text = text
-    update.message.reply_text = AsyncMock()
-    return update
-
-
-def make_context(args):
-    ctx = MagicMock()
-    ctx.args = args
-    return ctx
-
-
-def reply(update):
-    return update.message.reply_text.call_args.args[0]
-
 
 # --- tzutil ---
 
@@ -72,50 +53,3 @@ def test_set_timezone_invalid_rejected():
     assert get_timezone(1) == "Europe/Moscow"  # не изменился
 
 
-# --- /timezone ---
-
-async def test_timezone_show_default():
-    u = make_update(user_id=777)
-    await bot.timezone_command(u, make_context([]))
-    assert "UTC" in reply(u)
-
-
-async def test_timezone_set_valid():
-    u = make_update(user_id=778)
-    await bot.timezone_command(u, make_context(["Europe/Moscow"]))
-    assert "Europe/Moscow" in reply(u)
-    assert get_timezone(778) == "Europe/Moscow"
-
-
-async def test_timezone_set_invalid():
-    u = make_update(user_id=779)
-    await bot.timezone_command(u, make_context(["Bad/Zone"]))
-    assert "не распознан" in reply(u).lower()
-    assert get_timezone(779) == "UTC"
-
-
-# --- интеграция: /add хранит UTC, /list показывает локально ---
-
-async def test_add_stores_utc_for_non_utc_user():
-    set_timezone(555, "Europe/Moscow")
-    u = make_update(user_id=555, text="/add Митинг 2026-05-17 12:00")
-    await bot.add_task_command(u, make_context([]))
-    # хранится в UTC (12:00 МСК -> 09:00 UTC)
-    assert get_tasks(555)[0]["due_date"] == "2026-05-17 09:00:00"
-    # пользователю показано его локальное время
-    assert "2026-05-17 12:00:00" in reply(u)
-
-
-async def test_list_shows_local_time():
-    set_timezone(556, "Europe/Moscow")
-    add_task(556, "Звонок", "2026-05-17 09:00:00")  # UTC в БД
-    u = make_update(user_id=556)
-    await bot.list_tasks(u, make_context([]))
-    assert "2026-05-17 12:00:00" in reply(u)  # показано в МСК
-
-
-async def test_default_user_unaffected():
-    # без установленного пояса всё как раньше (UTC-identity)
-    u = make_update(user_id=999, text="/add Тест 2026-05-18 15:00")
-    await bot.add_task_command(u, make_context([]))
-    assert get_tasks(999)[0]["due_date"] == "2026-05-18 15:00:00"
