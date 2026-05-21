@@ -114,51 +114,107 @@
   .toast-action{background:transparent;color:#60a5fa;border:none;
     font-weight:600;padding:0;cursor:pointer}
   .toast-action:hover{text-decoration:underline}
+  /* Phase 11.2: section tabs + notes grid */
+  .bar.tabs{padding-top:0;padding-bottom:0;gap:0;border-bottom:1px solid var(--card)}
+  .tab{flex:1;background:none;color:var(--hint);font-weight:600;
+    padding:10px 0;border:none;border-bottom:2px solid transparent;
+    border-radius:0;cursor:pointer;font-size:15px}
+  .tab.active{color:var(--text);border-bottom-color:var(--btn)}
+  .notes-grid{list-style:none;padding:0 12px;margin:0;display:grid;
+    grid-template-columns:1fr 1fr;gap:8px}
+  @media (max-width:380px){ .notes-grid{grid-template-columns:1fr} }
+  .note{background:var(--card);border-radius:12px;padding:10px;
+    cursor:pointer;position:relative;display:flex;flex-direction:column;
+    gap:4px;min-height:80px;border:1px solid transparent}
+  .note.pinned{border-color:#f5b301}
+  .note .ntitle{font-weight:600;font-size:14px;word-break:break-word}
+  .note .nbody{font-size:13px;color:var(--text);
+    word-break:break-word;overflow:hidden;text-overflow:ellipsis;
+    display:-webkit-box;-webkit-line-clamp:5;
+    -webkit-box-orient:vertical}
+  .note .nmeta{font-size:11px;color:var(--hint);margin-top:auto}
+  .note .npin{position:absolute;top:6px;right:6px;font-size:14px;
+    color:#f5b301;opacity:.7}
+  /* Notes editor modal */
+  .note-editor input.modal-title-input,
+  .note-editor textarea.modal-body-input{width:100%;
+    padding:8px;background:var(--card);color:var(--text);
+    border:1px solid var(--hint);border-radius:8px;font-size:14px;
+    font-family:inherit}
+  .note-editor textarea.modal-body-input{min-height:160px;resize:vertical}
+  .note-editor .row{display:flex;gap:8px;align-items:center;
+    margin-top:8px;flex-wrap:wrap}
+  .note-editor .color-swatch{width:24px;height:24px;border-radius:50%;
+    cursor:pointer;border:2px solid transparent}
+  .note-editor .color-swatch.sel{border-color:var(--text)}
 </style>
 </head>
 <body>
 <header>
-  <h1>Мои задачи</h1>
+  <h1 id="appTitle">Мои задачи</h1>
   <div id="statsBadge" class="stats-badge" hidden title="Статистика">…</div>
 </header>
-<div class="bar">
-  <select id="listSel"></select>
-  <button id="newList" class="ghost" title="Создать список">+</button>
-  <button id="renList" class="ghost" title="Переименовать">✎</button>
-  <button id="clrList" class="ghost" title="Цвет">🎨</button>
-  <button id="delList" class="ghost" title="Удалить">🗑</button>
-  <button id="tzBtn" class="ghost" title="Часовой пояс">⚙</button>
-  <button id="expBtn" class="ghost" title="Экспорт">📦</button>
-  <button id="impBtn" class="ghost" title="Импорт">↩</button>
-  <input id="impFile" type="file" accept="application/json" hidden>
+
+<!-- Phase 11.2: переключатель разделов «Задачи / Заметки» -->
+<div class="bar tabs">
+  <button id="tabTasks" class="tab active" data-section="tasks">📋 Задачи</button>
+  <button id="tabNotes" class="tab" data-section="notes">📓 Заметки</button>
 </div>
-<div class="bar">
-  <input id="newTask" placeholder="Новая задача…" autocomplete="off">
-  <button id="addBtn">Добавить</button>
-</div>
-<div class="bar">
-  <input id="search" placeholder="🔎 Поиск…" autocomplete="off">
-  <select id="sortSel">
-    <option value="">сортировка</option>
-    <option value="important">важные</option>
-    <option value="due">по сроку</option>
-    <option value="alpha">алфавит</option>
-    <option value="created">по дате</option>
-  </select>
-</div>
-<div class="bar">
-  <select id="viewSel">
-    <option value="all">Все задачи</option>
-    <option value="myday">🗓 Мой день</option>
-    <option value="planned">📅 Планируется</option>
-    <option value="important">⭐ Важно</option>
-  </select>
-  <label style="color:var(--hint);font-size:13px">
-    <input type="checkbox" id="showDone"> с выполненными
-  </label>
-</div>
-<ul id="list"></ul>
-<div id="empty" class="muted" hidden>Пока нет задач</div>
+
+<!-- Раздел задач (как раньше) -->
+<section id="tasksSection">
+  <div class="bar">
+    <select id="listSel"></select>
+    <button id="newList" class="ghost" title="Создать список">+</button>
+    <button id="renList" class="ghost" title="Переименовать">✎</button>
+    <button id="clrList" class="ghost" title="Цвет">🎨</button>
+    <button id="delList" class="ghost" title="Удалить">🗑</button>
+    <button id="tzBtn" class="ghost" title="Часовой пояс">⚙</button>
+    <button id="expBtn" class="ghost" title="Экспорт">📦</button>
+    <button id="impBtn" class="ghost" title="Импорт">↩</button>
+    <input id="impFile" type="file" accept="application/json" hidden>
+  </div>
+  <div class="bar">
+    <input id="newTask" placeholder="Новая задача…" autocomplete="off">
+    <button id="addBtn">Добавить</button>
+  </div>
+  <div class="bar">
+    <input id="search" placeholder="🔎 Поиск…" autocomplete="off">
+    <select id="sortSel">
+      <option value="">сортировка</option>
+      <option value="important">важные</option>
+      <option value="due">по сроку</option>
+      <option value="alpha">алфавит</option>
+      <option value="created">по дате</option>
+    </select>
+  </div>
+  <div class="bar">
+    <select id="viewSel">
+      <option value="all">Все задачи</option>
+      <option value="myday">🗓 Мой день</option>
+      <option value="planned">📅 Планируется</option>
+      <option value="important">⭐ Важно</option>
+    </select>
+    <label style="color:var(--hint);font-size:13px">
+      <input type="checkbox" id="showDone"> с выполненными
+    </label>
+  </div>
+  <ul id="list"></ul>
+  <div id="empty" class="muted" hidden>Пока нет задач</div>
+</section>
+
+<!-- Phase 11.2: раздел заметок -->
+<section id="notesSection" hidden>
+  <div class="bar">
+    <input id="searchNotes" placeholder="🔎 Поиск по заметкам…"
+           autocomplete="off">
+    <button id="newNoteBtn">+ Заметка</button>
+  </div>
+  <ul id="notesList" class="notes-grid"></ul>
+  <div id="notesEmpty" class="muted" hidden>
+    Заметок ещё нет. Нажмите «+ Заметка», чтобы создать первую.
+  </div>
+</section>
 
 <script>
 const tg = window.Telegram ? window.Telegram.WebApp : null;
@@ -958,6 +1014,172 @@ $("#impFile").addEventListener("change", async (e) => {
   }
 });
 
+// --- Phase 11.2: Заметки ---
+
+const NOTE_COLORS = [
+  "#FEF3C7", "#FECACA", "#BBF7D0", "#BFDBFE",
+  "#E9D5FF", "#FED7AA", "#A7F3D0", "#FBCFE8",
+];
+
+let _section = _UI.section || "tasks";
+
+function switchSection(sec) {
+  _section = sec;
+  saveUI({section: sec});
+  $("#tasksSection").hidden = sec !== "tasks";
+  $("#notesSection").hidden = sec !== "notes";
+  $("#tabTasks").classList.toggle("active", sec === "tasks");
+  $("#tabNotes").classList.toggle("active", sec === "notes");
+  $("#appTitle").textContent = sec === "tasks" ? "Мои задачи" : "Мои заметки";
+  if (sec === "notes") loadNotes();
+  else load();
+}
+
+$("#tabTasks").onclick = () => switchSection("tasks");
+$("#tabNotes").onclick = () => switchSection("notes");
+
+let _notesSearchT;
+$("#searchNotes").addEventListener("input", () => {
+  clearTimeout(_notesSearchT);
+  _notesSearchT = setTimeout(loadNotes, 350);
+});
+
+async function loadNotes() {
+  const q = $("#searchNotes").value.trim();
+  const url = q ? "/notes?search=" + encodeURIComponent(q) : "/notes";
+  const notes = await api(url);
+  const ul = $("#notesList");
+  ul.innerHTML = "";
+  $("#notesEmpty").hidden = notes.length > 0;
+  for (const n of notes) ul.appendChild(noteCard(n));
+  refreshStats();
+}
+
+function noteCard(n) {
+  const li = document.createElement("li");
+  li.className = "note" + (n.pinned ? " pinned" : "");
+  li.style.background = n.color || "#FEF3C7";
+  // Цвет фона — пастель; текст всегда чёрный для контраста.
+  li.style.color = "#111827";
+  li.innerHTML =
+    (n.pinned ? '<span class="npin" title="Закреплено">📌</span>' : '')
+    + (n.title ? `<div class="ntitle">${esc(n.title)}</div>` : '')
+    + `<div class="nbody">${esc(n.body)}</div>`
+    + `<div class="nmeta">${shortDate(n.updated_at || n.created_at)}</div>`;
+  li.onclick = () => openNoteEditor(n);
+  return li;
+}
+
+function shortDate(s) {
+  if (!s) return "";
+  try {
+    const d = new Date(s.replace(" ", "T") + "Z");
+    return d.toLocaleString(undefined, {dateStyle:"short", timeStyle:"short"});
+  } catch { return s; }
+}
+
+$("#newNoteBtn").onclick = () => openNoteEditor(null);
+
+// Кастомный модал-редактор: заголовок, тело, цвет, кнопка-закрепить,
+// удалить (с undo), сохранить.
+function openNoteEditor(note) {
+  const isNew = note === null;
+  const cur = note || {title: "", body: "", color: NOTE_COLORS[0],
+                       pinned: false};
+  const back = document.createElement("div");
+  back.className = "modal-back";
+  back.innerHTML =
+    `<div class="modal note-editor">
+       <div class="modal-title">${isNew ? "Новая заметка" : "Заметка"}</div>
+       <input class="modal-title-input" placeholder="Заголовок (опционально)"
+         maxlength="120">
+       <textarea class="modal-body-input" placeholder="Текст заметки…"></textarea>
+       <div class="row">
+         <span style="color:var(--hint);font-size:12px">Цвет:</span>
+         ${NOTE_COLORS.map(c =>
+           `<span class="color-swatch" data-c="${c}" style="background:${c}"></span>`
+         ).join("")}
+       </div>
+       <div class="row">
+         <button class="ghost" data-act="pin">${cur.pinned ? "Открепить" : "Закрепить"}</button>
+         ${isNew ? "" : '<button class="ghost" data-act="del">🗑 Удалить</button>'}
+       </div>
+       <div class="modal-btns">
+         <button class="ghost modal-cancel">Отмена</button>
+         <button class="modal-ok">${isNew ? "Создать" : "Сохранить"}</button>
+       </div>
+     </div>`;
+  document.body.appendChild(back);
+  const tIn = back.querySelector(".modal-title-input");
+  const bIn = back.querySelector(".modal-body-input");
+  tIn.value = cur.title || "";
+  bIn.value = cur.body || "";
+  let chosenColor = cur.color || NOTE_COLORS[0];
+  let pinned = !!cur.pinned;
+  function refreshSwatches() {
+    back.querySelectorAll(".color-swatch").forEach(el => {
+      el.classList.toggle("sel", el.dataset.c === chosenColor);
+    });
+  }
+  back.querySelectorAll(".color-swatch").forEach(el => {
+    el.onclick = () => { chosenColor = el.dataset.c; refreshSwatches(); };
+  });
+  refreshSwatches();
+  const close = () => back.parentNode && back.parentNode.removeChild(back);
+  back.querySelector(".modal-cancel").onclick = close;
+  // Pin toggle: меняет локальное состояние + текст кнопки
+  const pinBtn = back.querySelector('[data-act="pin"]');
+  pinBtn.onclick = () => {
+    pinned = !pinned;
+    pinBtn.textContent = pinned ? "Открепить" : "Закрепить";
+  };
+  const delBtn = back.querySelector('[data-act="del"]');
+  if (delBtn) {
+    delBtn.onclick = async () => {
+      close();
+      await api(`/notes/${note.id}`, {method:"DELETE"});
+      loadNotes();
+      uiUndoToast("Заметка удалена.", async () => {
+        await api(`/notes/${note.id}/restore`, {method:"POST"});
+        loadNotes();
+        uiToast("Заметка восстановлена", "ok");
+      }, 8000);
+    };
+  }
+  back.querySelector(".modal-ok").onclick = async () => {
+    const body = bIn.value.trim();
+    if (!body) { uiToast("Тело заметки не может быть пустым"); return; }
+    const title = tIn.value.trim();
+    if (isNew) {
+      await api("/notes", {method:"POST", body: JSON.stringify({
+        body, title: title || null, color: chosenColor, pinned,
+      })});
+    } else {
+      const patch = {body, color: chosenColor, pinned};
+      if (title) patch.title = title;
+      else patch.clear_title = true;
+      await api(`/notes/${note.id}`, {method:"PATCH",
+        body: JSON.stringify(patch)});
+    }
+    close();
+    loadNotes();
+  };
+  // ESC закрывает.
+  bIn.addEventListener("keydown", e => {
+    if (e.key === "Escape") { e.preventDefault(); close(); }
+  });
+  if (tg && tg.BackButton) {
+    tg.BackButton.show();
+    const off = () => {
+      tg.BackButton.hide();
+      tg.offEvent("backButtonClicked", off);
+      close();
+    };
+    tg.onEvent("backButtonClicked", off);
+  }
+  setTimeout(() => (isNew ? bIn : tIn).focus(), 30);
+}
+
 // Восстанавливаем сохранённые поля до первого load() — иначе сразу
 // пойдёт лишний запрос с дефолтами, а затем повторный с восстановленными.
 (function restoreUI() {
@@ -968,7 +1190,10 @@ $("#impFile").addEventListener("change", async (e) => {
 })();
 
 (async () => {
-  try { await loadLists(); await load(); }
+  try {
+    await loadLists();
+    switchSection(_section);   // показывает нужную секцию и грузит её
+  }
   catch (e) { /* unauthorized уже показан */ }
 })();
 </script>

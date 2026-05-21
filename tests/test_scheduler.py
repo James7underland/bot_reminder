@@ -166,15 +166,20 @@ async def test_setup_scheduler_defers_start_to_post_init():
 def test_purge_job_wrapper_swallows_errors(monkeypatch, caplog):
     """`_purge_old_soft_deletes` логирует ошибку, но НЕ кидает —
     иначе APScheduler пометит job сломанным и в худшем случае
-    перестанет запускать."""
+    перестанет запускать. Phase 11.2: и для lists, и для notes."""
     import scheduler as scheduler_mod
 
-    def boom(**kw):
-        raise RuntimeError("simulated db crash")
-    monkeypatch.setattr(scheduler_mod, "purge_deleted_lists", boom)
+    def boom_lists(**kw):
+        raise RuntimeError("simulated lists crash")
+    def boom_notes(**kw):
+        raise RuntimeError("simulated notes crash")
+    monkeypatch.setattr(scheduler_mod, "purge_deleted_lists", boom_lists)
+    monkeypatch.setattr(scheduler_mod, "purge_deleted_notes", boom_notes)
     with caplog.at_level("ERROR"):
         scheduler_mod._purge_old_soft_deletes()   # не должно падать
-    assert any("purge_deleted_lists failed" in m for m in caplog.messages)
+    msgs = " ".join(caplog.messages)
+    assert "purge_deleted_lists failed" in msgs
+    assert "purge_deleted_notes failed" in msgs
 
 
 async def test_setup_scheduler_stop_skips_when_not_running():

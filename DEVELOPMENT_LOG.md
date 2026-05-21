@@ -1538,3 +1538,96 @@ ruff чист.
 Mini App; написать что угодно текстом — получит подсказку открыть
 Mini App; напоминания продолжат приходить как раньше. Далее — 11.2
 (заметки).
+
+---
+
+## Этап 47: Фаза 11.2 — раздел заметок
+
+**Дата:** 2026-05-21
+
+**Описание:** Ветка `phase/11.2-notes`. Запрос пользователя — отдельный
+раздел заметок (не привязанных к задачам), как Sticky Notes/Keep.
+
+**БД.** Новая таблица `notes`:
+```
+id, user_id, title (NULL), body (NOT NULL), pinned (0/1),
+color (#RRGGBB, дефолт #FEF3C7 пастельно-жёлтый),
+created_at, updated_at, deleted_at.
+```
+Функции (тот же стиль, что у task/list):
+- `add_note(user_id, body, title=None, color=None) -> int|None`. Пустое
+  тело и битый цвет → None.
+- `get_notes(user_id, include_deleted=False)` — pinned-first, потом
+  `updated_at DESC, id DESC` (последнее изменение наверху).
+- `get_note(id)` — любой статус, для restore.
+- `update_note(*, title, body, pinned, color, clear_title)` —
+  частичный апдейт; `clear_title=True` обнуляет заголовок (т.к. None
+  у `title` уже означает «не трогать»). Битый цвет → False. Пустое
+  тело → False. Автоматически обновляет `updated_at`.
+- `delete_note(id)` / `restore_note(id)` — soft-delete pattern
+  идентичный Phase 10.7 (idempotent повторный — False).
+- `purge_deleted_notes(hours=24)` — физическое удаление.
+- `search_notes(user_id, query)` — подстрока в title или body
+  (case-insensitive Python-фильтр по аналогии с `search_tasks`,
+  работает с кириллицей).
+
+**API.**
+- `GET /api/notes?search=...` — список (+ поиск опционально).
+- `POST /api/notes {body, title?, color?, pinned?}` — создание.
+  `pinned=true` запускает доп. PATCH сразу после INSERT (одна
+  транзакция не требуется — побочный эффект минимальный).
+- `PATCH /api/notes/{id} {body?, title?, pinned?, color?,
+  clear_title?}` — 422 на пустой апдейт/пустое тело/битый цвет.
+- `DELETE /api/notes/{id}` — soft.
+- `POST /api/notes/{id}/restore` — undo. 404 на чужую/несуществующую/
+  активную.
+- Все эндпоинты под initData. `_require_own_note` отделён от тасков
+  (404 на чужую и на удалённую без `include_deleted=True`).
+
+**Scheduler.** Job `purge_deleted` теперь дёргает и
+`purge_deleted_lists`, и `purge_deleted_notes` (каждый в своём
+try/except — ошибка одного не блокирует другой). Тест обновлён.
+
+**Export/Import.** Поле `notes` добавлено в экспорт (заголовок, тело,
+pinned, color, created_at, updated_at). При импорте — optional (старые
+бэкапы без `notes` принимаются). В merge-режиме не отсеиваем
+дубликаты по контенту (пользователь сам решит). В replace-режиме —
+`DELETE FROM notes WHERE user_id=?` перед вставкой. Кривые элементы
+(не-dict, пустое тело, битый цвет → fallback) пропускаются. Возврат
+функции — `{lists, tasks, steps, notes}`.
+
+**get_user_stats.** Добавлен `notes` — счётчик активных заметок.
+
+**Frontend.**
+- Вкладки «📋 Задачи / 📓 Заметки» в верхней панели (replaces
+  заголовок раздела; `appTitle` тоже динамический).
+- Notes section: поиск `🔎 Поиск по заметкам…` с дебаунсом,
+  кнопка `+ Заметка`, grid 2×N карточек (на узких экранах → 1 колонка
+  через `@media (max-width: 380px)`).
+- Каждая карточка — `.note` с фоном цвета заметки, эмодзи 📌 в углу
+  для закреплённой, превью body (5 строк через `-webkit-line-clamp`),
+  дата последнего изменения в локали пользователя
+  (`Date.toLocaleString`). Клик → редактор.
+- Редактор-модал (`.note-editor`): поля заголовок (опциональный,
+  до 120 символов) и тело (textarea), палитра из 8 пастелей,
+  toggle «Закрепить/Открепить», для существующих заметок — кнопка
+  🗑 «Удалить» (использует `uiUndoToast` из Phase 10.7),
+  «Сохранить»/«Создать». ESC и Telegram BackButton закрывают как
+  «отмена».
+- Раздел сохраняется в `localStorage` (`saveUI({section})`); при
+  следующем запуске — открывается тот, что был.
+- `refreshStats()` вызывается из обоих `load()` / `loadNotes()` —
+  бэйдж показывает актуальное число активных задач.
+
+**Результат:** 210 тестов зелёные (+15: CRUD заметок DB и API,
+pinned-first/updated_at-desc, поиск по title/body case-insensitive,
+delete→restore→повторный restore→False, purge через сдвиг
+deleted_at, валидатор payload `notes` is list, malformed-элементы
+пропускаются, replace-режим вычищает заметки, POST с pinned, 422
+на битый цвет, stats содержит notes, scheduler покрытие 100%).
+`bot.py`/`scheduler.py`/`tzutil.py` 100%, `database.py`/`webapp.py`
+99%, `config.py` 82%, TOTAL **98.93%**; ruff чист.
+
+**Статус:** PR #44 → merge → авто-деплой. После — пользователь
+проверяет: вкладка «📓 Заметки», создание/редактирование/удаление
+с undo, поиск, pin, цвета.

@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 import config
 from database import (
+    add_note,
     add_step,
     add_task,
     add_to_myday,
@@ -30,12 +31,15 @@ from database import (
     create_list,
     db_ping,
     delete_list,
+    delete_note,
     delete_step,
     export_user_data,
     get_global_counts,
     get_important_tasks,
     get_lists,
     get_myday,
+    get_note,
+    get_notes,
     get_planned,
     get_steps,
     get_steps_counts,
@@ -55,6 +59,8 @@ from database import (
     rename_list,
     reorder_task,
     restore_list,
+    restore_note,
+    search_notes,
     search_tasks,
     set_deadline,
     set_important,
@@ -64,6 +70,7 @@ from database import (
     set_reminder_at,
     set_timezone,
     snooze_reminder,
+    update_note,
     update_task_description,
 )
 from logsetup import setup_logging
@@ -218,6 +225,23 @@ class Snooze(BaseModel):
 
 class Reorder(BaseModel):
     after: int | None = None
+
+
+# --- Phase 11.2: Notes ---
+
+class NoteCreate(BaseModel):
+    body: str
+    title: str | None = None
+    color: str | None = None
+    pinned: bool = False
+
+
+class NotePatch(BaseModel):
+    body: str | None = None
+    title: str | None = None
+    pinned: bool | None = None
+    color: str | None = None
+    clear_title: bool = False
 
 
 _STARTED_AT = time.monotonic()
@@ -556,6 +580,87 @@ async def api_restore_list(
     if target.get("deleted_at") is None:
         raise HTTPException(status_code=404, detail="list is not deleted")
     restore_list(list_id)
+    return {"ok": True}
+
+
+# --- Phase 11.2: Notes endpoints ---
+
+def _require_own_note(user_id: int, note_id: int, *,
+                      include_deleted: bool = False) -> dict:
+    """404 на чужую/несуществующую заметку. Возвращает её dict."""
+    note = get_note(note_id)
+    if note is None or note["user_id"] != user_id:
+        raise HTTPException(status_code=404, detail="note not found")
+    if not include_deleted and note.get("deleted_at"):
+        raise HTTPException(status_code=404, detail="note not found")
+    return note
+
+
+@app.get("/api/notes")
+async def api_notes(
+    search: str | None = None,
+    user_id: int = Depends(current_user_id),
+) -> list[dict]:
+    """Активные заметки пользователя; pinned-first, потом по updated_at."""
+    if search and search.strip():
+        return search_notes(user_id, search)
+    return get_notes(user_id)
+
+
+@app.post("/api/notes")
+async def api_create_note(
+    body: NoteCreate, user_id: int = Depends(current_user_id),
+) -> dict:
+    text = (body.body or "").strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="empty body")
+    note_id = add_note(user_id, text, title=body.title, color=body.color)
+    if note_id is None:
+        raise HTTPException(status_code=422, detail="bad color or empty body")
+    if body.pinned:
+        update_note(note_id, pinned=True)
+    return get_note(note_id)
+
+
+@app.patch("/api/notes/{note_id}")
+async def api_patch_note(
+    note_id: int,
+    body: NotePatch,
+    user_id: int = Depends(current_user_id),
+) -> dict:
+    _require_own_note(user_id, note_id)
+    ok = update_note(
+        note_id,
+        title=body.title,
+        body=body.body,
+        pinned=body.pinned,
+        color=body.color,
+        clear_title=body.clear_title,
+    )
+    if not ok:
+        raise HTTPException(
+            status_code=422,
+            detail="nothing to update / empty body / bad color",
+        )
+    return get_note(note_id)
+
+
+@app.delete("/api/notes/{note_id}")
+async def api_delete_note(
+    note_id: int, user_id: int = Depends(current_user_id),
+) -> dict:
+    _require_own_note(user_id, note_id)
+    return {"ok": delete_note(note_id)}
+
+
+@app.post("/api/notes/{note_id}/restore")
+async def api_restore_note(
+    note_id: int, user_id: int = Depends(current_user_id),
+) -> dict:
+    note = _require_own_note(user_id, note_id, include_deleted=True)
+    if not note.get("deleted_at"):
+        raise HTTPException(status_code=404, detail="note is not deleted")
+    restore_note(note_id)
     return {"ok": True}
 
 
