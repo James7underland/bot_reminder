@@ -593,6 +593,21 @@ Mini App» + «Нужно добавить раздел с заметками (�
   вырезаны handler-тесты — DB-слой остаётся, пользовательские сценарии
   живут в `test_webapp.py`. Планировщик (рассылка напоминаний и
   purge soft-deleted) сохранён. 196 тестов, TOTAL 99.30%.
+- **11.19 ✅ (PR #62):** Напоминания для заметок. БД: колонки
+  `notes.reminder_at TEXT`, `notes.reminder_sent INTEGER` (миграция +
+  CREATE TABLE). `set_note_reminder(id, utc|None)` сбрасывает
+  `reminder_sent`; `get_due_note_reminders(now)` для планировщика;
+  `mark_note_reminder_sent(id)` после доставки. Scheduler:
+  `_notify(items, prefix, mark, text_for=...)` обобщён — для задач
+  использует `_task_text(t)=t.description`, для заметок —
+  `_note_text(n)=title || body[:140]`. Третий вызов в
+  `check_and_send_reminders` шлёт «📓 Заметка: …» без snooze-кнопок
+  (у заметки нет состояния «выполнено»). API: PATCH `/api/notes/{id}`
+  принимает `reminder_at` и `clear_reminder`; пустой PATCH с одним
+  только напоминанием не даёт 422. Фронтенд: в редакторе заметки —
+  `<input type="datetime-local">` «Напомнить» + кнопка «Убрать
+  напом.»; на карточке — badge `⏰ <дата>` если задано. Экспорт/импорт
+  переносит `reminder_at` в payload. 253 теста.
 - **11.18 ✅ (PR #61):** Floating action button (FAB) для добавления.
   Круглая «+» в правом нижнем углу, 56×56 px, акцентный цвет
   (`--btn`), мягкая тень с подъёмом на hover. В разделе «📋 Задачи»

@@ -159,9 +159,19 @@ def init_db():
             color TEXT NOT NULL DEFAULT '#FEF3C7',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            deleted_at TEXT
+            deleted_at TEXT,
+            reminder_at TEXT,
+            reminder_sent INTEGER NOT NULL DEFAULT 0
         )
     ''')
+    # Phase 11.19: для существующих БД — добавить колонки.
+    note_columns = {row[1] for row in cursor.execute("PRAGMA table_info(notes)")}
+    if "reminder_at" not in note_columns:
+        cursor.execute("ALTER TABLE notes ADD COLUMN reminder_at TEXT")
+    if "reminder_sent" not in note_columns:
+        cursor.execute(
+            "ALTER TABLE notes ADD COLUMN reminder_sent INTEGER NOT NULL DEFAULT 0"
+        )
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована.")
@@ -1758,10 +1768,10 @@ def export_user_data(user_id: int) -> dict:
     )
     tz_row = cursor.fetchone()
     tz = tz_row["timezone"] if tz_row else "UTC"
-    # Phase 11.2: заметки.
+    # Phase 11.2: заметки. Phase 11.19: + reminder_at.
     cursor.execute(
-        "SELECT title, body, pinned, color, created_at, updated_at "
-        "FROM notes WHERE user_id = ? AND deleted_at IS NULL "
+        "SELECT title, body, pinned, color, created_at, updated_at, "
+        "reminder_at FROM notes WHERE user_id = ? AND deleted_at IS NULL "
         "ORDER BY created_at, id",
         (user_id,),
     )
@@ -1773,6 +1783,7 @@ def export_user_data(user_id: int) -> dict:
         "color": r["color"],
         "created_at": r["created_at"],
         "updated_at": r["updated_at"],
+        "reminder_at": r["reminder_at"],
     } for r in notes_rows]
     conn.close()
     return {
@@ -1938,13 +1949,14 @@ def import_user_data(
                 else "#FEF3C7"
             cursor.execute(
                 "INSERT INTO notes (user_id, title, body, pinned, color, "
-                "created_at, updated_at) VALUES (?, ?, ?, ?, ?, "
+                "created_at, updated_at, reminder_at) VALUES (?, ?, ?, ?, ?, "
                 "COALESCE(?, CURRENT_TIMESTAMP), "
-                "COALESCE(?, CURRENT_TIMESTAMP))",
+                "COALESCE(?, CURRENT_TIMESTAMP), ?)",
                 (
                     user_id, title, body,
                     1 if note.get("pinned") else 0, color,
                     note.get("created_at"), note.get("updated_at"),
+                    note.get("reminder_at"),
                 ),
             )
             notes_added += 1
@@ -2102,6 +2114,66 @@ def update_note(
         logger.info("note=%s updated (%s)", note_id, ",".join(sets[:-1]))
         return True
     logger.warning("update_note: note=%s not found", note_id)
+    return False
+
+
+def set_note_reminder(note_id: int, reminder_at: str | None) -> bool:
+    """
+    Phase 11.19: задаёт/снимает напоминание для заметки.
+    `reminder_at` — UTC «YYYY-MM-DD HH:MM:SS» или None для сброса.
+    При установке сбрасывается `reminder_sent`, чтобы планировщик
+    отправил его заново. False — заметки нет.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE notes SET reminder_at = ?, reminder_sent = 0, "
+        "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (reminder_at, note_id),
+    )
+    rows = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows > 0:
+        logger.info("note=%s reminder_at=%s", note_id, reminder_at)
+        return True
+    logger.warning("set_note_reminder: note=%s not found", note_id)
+    return False
+
+
+def get_due_note_reminders(now: str) -> list[dict]:
+    """
+    Phase 11.19: активные заметки с напоминанием ≤ now, ещё не отправлены.
+    Используется планировщиком. `now` — наивная UTC-строка.
+    """
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM notes WHERE deleted_at IS NULL AND reminder_sent = 0 "
+        "AND reminder_at IS NOT NULL AND reminder_at <= ? "
+        "ORDER BY reminder_at",
+        (now,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [_row_to_note(r) for r in rows]
+
+
+def mark_note_reminder_sent(note_id: int) -> bool:
+    """Phase 11.19: помечает напоминание отправленным. False — нет."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE notes SET reminder_sent = 1 WHERE id = ?", (note_id,)
+    )
+    rows = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows > 0:
+        logger.info("note=%s reminder_sent=1", note_id)
+        return True
+    logger.warning("mark_note_reminder_sent: note=%s not found", note_id)
     return False
 
 

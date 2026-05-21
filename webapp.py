@@ -71,6 +71,7 @@ from database import (
     set_important,
     set_list_color,
     set_note,
+    set_note_reminder,
     set_recurrence,
     set_reminder_at,
     set_task_note,
@@ -302,6 +303,9 @@ class NotePatch(BaseModel):
     pinned: bool | None = None
     color: str | None = None
     clear_title: bool = False
+    # Phase 11.19: напоминание для заметки (UTC после to_utc_or_none).
+    reminder_at: str | None = None
+    clear_reminder: bool = False
 
 
 _STARTED_AT = time.monotonic()
@@ -782,6 +786,19 @@ async def api_patch_note(
     user_id: int = Depends(current_user_id),
 ) -> dict:
     _require_own_note(user_id, note_id)
+    # Phase 11.19: напоминание для заметки обрабатывается отдельной
+    # функцией БД, потому что update_note этой колонки не знает.
+    reminder_touched = False
+    if body.clear_reminder:
+        set_note_reminder(note_id, None)
+        reminder_touched = True
+    elif body.reminder_at is not None:
+        utc = _to_utc_or_none(body.reminder_at, user_id)
+        set_note_reminder(note_id, utc)
+        reminder_touched = True
+    # Остальные поля — через update_note. Если ВСЁ изменение было
+    # только в напоминании, update_note вернёт False (ничего другого
+    # обновить), но это не ошибка — поэтому отдельно ловим.
     ok = update_note(
         note_id,
         title=body.title,
@@ -790,7 +807,7 @@ async def api_patch_note(
         color=body.color,
         clear_title=body.clear_title,
     )
-    if not ok:
+    if not ok and not reminder_touched:
         raise HTTPException(
             status_code=422,
             detail="nothing to update / empty body / bad color",

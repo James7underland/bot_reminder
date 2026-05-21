@@ -312,6 +312,9 @@
   .md .md-cb:hover{transform:scale(1.15)}
   .md .md-cb-on{color:#16a34a !important}
   .md .md-done{text-decoration:line-through;opacity:.55}
+  .note .nrem{font-size:11px;color:#1d4ed8 !important;
+    background:rgba(29,78,216,.08);border-radius:6px;
+    padding:3px 8px;align-self:flex-start;display:inline-block}
   .note .nmeta{font-size:11px;margin-top:auto;color:#475569 !important}
   .note .npin{position:absolute;top:8px;right:8px;font-size:14px;
     color:#f5b301;opacity:.9}
@@ -2099,10 +2102,15 @@ function noteCard(n) {
   li.style.background = n.color || "#FEF3C7";
   // Цвет фона — пастель; текст всегда чёрный для контраста.
   li.style.color = "#111827";
+  // Phase 11.19: badge с временем напоминания, если установлено.
+  const remBadge = n.reminder_at
+    ? `<div class="nrem" title="Напомнить">⏰ ${shortDate(n.reminder_at)}</div>`
+    : '';
   li.innerHTML =
     (n.pinned ? '<span class="npin" title="Закреплено">📌</span>' : '')
     + (n.title ? `<div class="ntitle">${esc(n.title)}</div>` : '')
     + `<div class="nbody md">${mdToHtml(n.body)}</div>`
+    + remBadge
     + `<div class="nmeta">${shortDate(n.updated_at || n.created_at)}</div>`;
   li.onclick = (e) => {
     // Phase 11.9: клик по чек-боксу → toggle прямо из карточки,
@@ -2159,8 +2167,13 @@ function openNoteEditor(note) {
            `<span class="color-swatch" data-c="${c}" style="background:${c}"></span>`
          ).join("")}
        </div>
+       <label style="font-size:12px;color:var(--hint)">
+         Напомнить
+         <input type="datetime-local" class="note-rem-input">
+       </label>
        <div class="row">
          <button class="ghost" data-act="pin">${cur.pinned ? "Открепить" : "Закрепить"}</button>
+         <button class="ghost" data-act="clr-rem">Убрать напом.</button>
          ${isNew ? "" : '<button class="ghost" data-act="del">🗑 Удалить</button>'}
        </div>
        ${isNew ? "" : '<div class="note-linked" style="color:var(--hint);font-size:12px"></div>'}
@@ -2201,6 +2214,19 @@ function openNoteEditor(note) {
   refreshSwatches();
   const close = () => back.parentNode && back.parentNode.removeChild(back);
   back.querySelector(".modal-cancel").onclick = close;
+  // Phase 11.19: поле напоминания + кнопка «Убрать напом.».
+  const remIn = back.querySelector(".note-rem-input");
+  let remCleared = false;
+  // Сервер хранит UTC; для отображения в input — конвертируем в локаль.
+  if (!isNew && cur.reminder_at) {
+    remIn.value = toInput(cur.reminder_at);   // toInput: 'YYYY-MM-DDTHH:MM'
+  }
+  const clrRemBtn = back.querySelector('[data-act="clr-rem"]');
+  clrRemBtn.onclick = () => {
+    remIn.value = "";
+    remCleared = true;
+  };
+  remIn.addEventListener("input", () => { remCleared = false; });
   // Pin toggle: меняет локальное состояние + текст кнопки
   const pinBtn = back.querySelector('[data-act="pin"]');
   pinBtn.onclick = () => {
@@ -2224,14 +2250,23 @@ function openNoteEditor(note) {
     const body = bIn.value.trim();
     if (!body) { uiToast("Тело заметки не может быть пустым"); return; }
     const title = tIn.value.trim();
+    // Phase 11.19: получаем reminder из input'а (локальное datetime).
+    const remVal = remIn.value;   // 'YYYY-MM-DDTHH:MM' or ''
     if (isNew) {
-      await api("/notes", {method:"POST", body: JSON.stringify({
-        body, title: title || null, color: chosenColor, pinned,
-      })});
+      const created = await api("/notes", {method:"POST", body:
+        JSON.stringify({body, title: title || null, color: chosenColor, pinned})});
+      // Reminder ставим через PATCH (создание не принимает reminder_at,
+      // чтобы не загромождать NoteCreate). Если поле заполнено.
+      if (remVal && created && created.id) {
+        await api(`/notes/${created.id}`, {method:"PATCH",
+          body: JSON.stringify({reminder_at: fmt(remVal)})});
+      }
     } else {
       const patch = {body, color: chosenColor, pinned};
       if (title) patch.title = title;
       else patch.clear_title = true;
+      if (remCleared) patch.clear_reminder = true;
+      else if (remVal) patch.reminder_at = fmt(remVal);
       await api(`/notes/${note.id}`, {method:"PATCH",
         body: JSON.stringify(patch)});
     }

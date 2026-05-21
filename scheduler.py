@@ -14,8 +14,10 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 import config
 from config import SCHEDULER_CHECK_INTERVAL
 from database import (
+    get_due_note_reminders,
     get_due_reminders,
     get_overdue_tasks,
+    mark_note_reminder_sent,
     mark_overdue_notified,
     mark_reminder_sent,
     purge_deleted_lists,
@@ -41,43 +43,52 @@ def _reminder_keyboard(task_id: int) -> InlineKeyboardMarkup:
     ]])
 
 
-async def _notify(bot, tasks, prefix, mark, with_buttons: bool = True) -> int:
-    """Шлёт `prefix: описание` каждой задаче; помечает успешные.
+def _task_text(item) -> str:
+    """Текст уведомления для задачи: `описание`."""
+    return str(item.get("description") or "")
 
-    Анти-дубль: успех → `mark(task_id)`. Ошибка отправки → НЕ помечаем
-    (повтор на следующем тике, приоритет — доставить).
 
-    Phase 11.3: если задан `ALLOWED_USER_IDS`, фильтруем задачи чужих
-    пользователей (их Telegram заблокирует/мы не имеем права писать
-    им). Username проверять не можем (нет в БД), поэтому пропускаем
-    только по ID-allowlist; если он пуст — рассылаем всем (старое
-    поведение).
+def _note_text(item) -> str:
+    """Текст уведомления для заметки: title (если есть), иначе тело."""
+    if item.get("title"):
+        return str(item["title"])
+    body = (item.get("body") or "").strip()
+    return body[:140]
 
-    Phase 11.7: к сообщению прикладываем инлайн-кнопки (+15м/+1ч/Готово)
-    при `with_buttons=True`. Для overdue-уведомлений (без активного
-    reminder_at) snooze бессмысленен — там только «Готово».
+
+async def _notify(bot, items, prefix, mark, *,
+                  with_buttons: bool = True,
+                  text_for=_task_text) -> int:
+    """Шлёт `prefix: текст(item)` каждому элементу; помечает успешные.
+
+    Анти-дубль: успех → `mark(item.id)`. Ошибка → НЕ помечаем (повтор
+    на следующем тике; приоритет — доставить).
+
+    Phase 11.3: ALLOWED_USER_IDS фильтрует чужие user_id (с пометкой как
+    sent, чтобы не вызывать flood-stop).
+    Phase 11.7: snooze-кнопки прикладываются при `with_buttons=True`.
+    Phase 11.19: `text_for` позволяет повторно использовать _notify
+    для заметок (title/body вместо description) и для других сущностей.
     """
     allowed_ids = config.ALLOWED_USER_IDS
     sent = 0
-    for task in tasks:
-        if allowed_ids and task["user_id"] not in allowed_ids:
-            # Помечаем как отправленное, чтобы не пытались на каждом
-            # тике (вызовет flood-stop на стороне бота).
-            mark(task["id"])
+    for item in items:
+        if allowed_ids and item["user_id"] not in allowed_ids:
+            mark(item["id"])
             continue
         try:
             kw = {}
             if with_buttons:
-                kw["reply_markup"] = _reminder_keyboard(task["id"])
+                kw["reply_markup"] = _reminder_keyboard(item["id"])
             await bot.send_message(
-                chat_id=task["user_id"],
-                text=f"{prefix}: {task['description']}",
+                chat_id=item["user_id"],
+                text=f"{prefix}: {text_for(item)}",
                 **kw,
             )
         except Exception as e:
-            logger.error("notify failed task=%s: %s", task["id"], e)
+            logger.error("notify failed item=%s: %s", item["id"], e)
             continue
-        mark(task["id"])
+        mark(item["id"])
         sent += 1
     return sent
 
@@ -97,6 +108,13 @@ async def check_and_send_reminders(bot, now: datetime | None = None) -> int:
     )
     sent += await _notify(
         bot, get_overdue_tasks(now_str), "Просрочено", mark_overdue_notified
+    )
+    # Phase 11.19: напоминания для заметок (без snooze-кнопок —
+    # заметки не имеют состояния «выполнено» / рекуррентности).
+    sent += await _notify(
+        bot, get_due_note_reminders(now_str), "📓 Заметка",
+        mark_note_reminder_sent,
+        with_buttons=False, text_for=_note_text,
     )
     return sent
 
