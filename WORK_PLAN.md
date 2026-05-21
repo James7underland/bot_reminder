@@ -593,6 +593,20 @@ Mini App» + «Нужно добавить раздел с заметками (�
   вырезаны handler-тесты — DB-слой остаётся, пользовательские сценарии
   живут в `test_webapp.py`. Планировщик (рассылка напоминаний и
   purge soft-deleted) сохранён. 196 тестов, TOTAL 99.30%.
+- **11.7 ✅ (PR #50):** Inline-edit задачи + snooze-кнопки в
+  уведомлениях. (a) Двойной клик по тексту задачи → `<input>` поверх,
+  Enter сохраняет / Esc отменяет / blur сохраняет; `li.editing`
+  скрывает панель, чтобы не путаться. (b) Scheduler `_notify`
+  прикладывает InlineKeyboardMarkup `[+15м, +1ч, ✓ Готово]` к
+  каждому уведомлению; callback-data — короткие токены `snz:<id>:
+  <mins>` и `done:<id>`. Bot: `CallbackQueryHandler` с whitelist-
+  проверкой и валидацией принадлежности задачи. `snz` → `snooze_
+  reminder`, `done` → `complete_task`; в обоих случаях редактируется
+  исходное сообщение, чтобы видеть результат («Отложено на N мин: …»
+  / «✓ Выполнено: …»). Тесты: snooze callback сдвигает reminder_at,
+  done закрывает задачу и пишет «Выполнено», foreign callback
+  игнорится, garbage data не ломает обработчик, whitelist отвергает.
+  239 тестов.
 - **11.6 ✅ (PR #49):** Связь задача ↔ заметка. БД: колонка
   `tasks.note_id INTEGER` (миграция). `set_task_note(task_id,
   note_id|None)` — устанавливает/снимает связь (валидацию ownership

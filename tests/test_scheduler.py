@@ -55,9 +55,15 @@ async def test_check_and_send_reminder_and_idempotent():
     sent = await check_and_send_reminders(bot, now=NOW_DT)
 
     assert sent == 1
-    bot.send_message.assert_awaited_once_with(
-        chat_id=42, text="Напоминаю: Позвонить врачу"
-    )
+    # Phase 11.7: к сообщению прикладываем inline-keyboard для snooze.
+    bot.send_message.assert_awaited_once()
+    call = bot.send_message.call_args
+    assert call.kwargs["chat_id"] == 42
+    assert call.kwargs["text"] == "Напоминаю: Позвонить врачу"
+    kb = call.kwargs.get("reply_markup")
+    assert kb is not None
+    btns = kb.inline_keyboard[0]
+    assert [b.text for b in btns] == ["+15м", "+1ч", "✓ Готово"]
 
     bot.reset_mock()
     assert await check_and_send_reminders(bot, now=NOW_DT) == 0
@@ -94,9 +100,12 @@ async def test_check_and_send_overdue_and_idempotent():
     sent = await check_and_send_reminders(bot, now=NOW_DT)
 
     assert sent == 1
-    bot.send_message.assert_awaited_once_with(
-        chat_id=5, text="Просрочено: Сдать отчёт"
-    )
+    bot.send_message.assert_awaited_once()
+    call = bot.send_message.call_args
+    assert call.kwargs["chat_id"] == 5
+    assert call.kwargs["text"] == "Просрочено: Сдать отчёт"
+    # Phase 11.7: overdue тоже получает inline-keyboard.
+    assert call.kwargs.get("reply_markup") is not None
 
     bot.reset_mock()
     assert await check_and_send_reminders(bot, now=NOW_DT) == 0

@@ -54,6 +54,11 @@
   li.dragging{opacity:.55}
   li.drop-above{box-shadow:inset 0 3px 0 var(--btn)}
   li.drop-below{box-shadow:inset 0 -3px 0 var(--btn)}
+  /* Phase 11.7: inline-edit заголовка задачи */
+  .edit-title{width:100%;padding:4px 6px;font-size:15px;
+    background:var(--card);color:var(--text);
+    border:1px solid var(--btn);border-radius:6px}
+  li.editing .panel{display:none !important}
   .panel{margin-top:10px;display:none;flex-direction:column;gap:8px}
   .panel.open{display:flex}
   .panel label{font-size:12px;color:var(--hint)}
@@ -774,6 +779,52 @@ function attachDragDrop(ul){
   });
 }
 
+// Phase 11.7: inline-edit заголовка задачи. Двойной клик на `.ttl`
+// подменяет текст на <input>; Enter / blur сохраняет, Escape отменяет.
+function inlineEditTitle(li, t) {
+  const ttl = li.querySelector(".ttl");
+  if (!ttl) return;
+  const meta = ttl.querySelector(".meta");
+  const metaHTML = meta ? meta.outerHTML : "";
+  const orig = t.description;
+  li.classList.add("editing");
+  // Сохраняем и закрываем панель, если она была открыта — текст
+  // дублируется в `.f-desc` внутри панели, чтобы не путаться.
+  const panel = li.querySelector(".panel");
+  if (panel) panel.classList.remove("open");
+
+  const inp = document.createElement("input");
+  inp.type = "text";
+  inp.className = "edit-title";
+  inp.value = orig;
+  inp.maxLength = 500;
+  // Заменяем текст на input, оставляя .meta под ним.
+  ttl.innerHTML = "";
+  ttl.appendChild(inp);
+  if (metaHTML) ttl.insertAdjacentHTML("beforeend", metaHTML);
+  setTimeout(() => { inp.focus(); inp.select(); }, 10);
+
+  let done = false;
+  const finish = async (commit) => {
+    if (done) return;
+    done = true;
+    const v = inp.value.trim();
+    li.classList.remove("editing");
+    if (!commit || !v || v === orig) {
+      load();   // просто перерисовываем — input исчезнет
+      return;
+    }
+    await api(`/tasks/${t.id}`, {method:"PATCH",
+      body: JSON.stringify({description: v})});
+    load();
+  };
+  inp.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); finish(true); }
+    else if (e.key === "Escape") { e.preventDefault(); finish(false); }
+  });
+  inp.addEventListener("blur", () => finish(true));
+}
+
 function row(t){
   const li = document.createElement("li");
   li.dataset.id = t.id;
@@ -917,11 +968,21 @@ function row(t){
       toggleSelect(t.id);
       return;
     }
+    // Если уже в режиме inline-edit — клик внутри input не должен
+    // закрывать панель или что-то делать.
+    if (li.classList.contains("editing")) return;
     const p = $(".panel", li);
     p.classList.toggle("open");
     if (p.classList.contains("open") &&
         $(".steps", li).dataset.loaded === "0") refreshSteps();
   };
+  // Phase 11.7: двойной клик → inline-редактирование описания.
+  $(".ttl", li).addEventListener("dblclick", (e) => {
+    if (selectMode || li.classList.contains("editing")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    inlineEditTitle(li, t);
+  });
   // Phase 11.4: long-press по `.ttl` → вход в режим мульти-выбора.
   let _lpTimer = null;
   let _lpX = 0, _lpY = 0;

@@ -9,6 +9,7 @@ import logging
 from datetime import UTC, datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 import config
 from config import SCHEDULER_CHECK_INTERVAL
@@ -26,7 +27,20 @@ logger = logging.getLogger(__name__)
 _TIME_FMT = "%Y-%m-%d %H:%M:%S"
 
 
-async def _notify(bot, tasks, prefix, mark) -> int:
+def _reminder_keyboard(task_id: int) -> InlineKeyboardMarkup:
+    """
+    Phase 11.7: кнопки прямо в уведомлении: +15 мин, +1 ч, ✓ Готово.
+    Callback-data — короткие токены `snz:<id>:<minutes>` и
+    `done:<id>` (Telegram ограничивает payload 64 байтами).
+    """
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("+15м", callback_data=f"snz:{task_id}:15"),
+        InlineKeyboardButton("+1ч", callback_data=f"snz:{task_id}:60"),
+        InlineKeyboardButton("✓ Готово", callback_data=f"done:{task_id}"),
+    ]])
+
+
+async def _notify(bot, tasks, prefix, mark, with_buttons: bool = True) -> int:
     """Шлёт `prefix: описание` каждой задаче; помечает успешные.
 
     Анти-дубль: успех → `mark(task_id)`. Ошибка отправки → НЕ помечаем
@@ -37,6 +51,10 @@ async def _notify(bot, tasks, prefix, mark) -> int:
     им). Username проверять не можем (нет в БД), поэтому пропускаем
     только по ID-allowlist; если он пуст — рассылаем всем (старое
     поведение).
+
+    Phase 11.7: к сообщению прикладываем инлайн-кнопки (+15м/+1ч/Готово)
+    при `with_buttons=True`. Для overdue-уведомлений (без активного
+    reminder_at) snooze бессмысленен — там только «Готово».
     """
     allowed_ids = config.ALLOWED_USER_IDS
     sent = 0
@@ -47,9 +65,13 @@ async def _notify(bot, tasks, prefix, mark) -> int:
             mark(task["id"])
             continue
         try:
+            kw = {}
+            if with_buttons:
+                kw["reply_markup"] = _reminder_keyboard(task["id"])
             await bot.send_message(
                 chat_id=task["user_id"],
                 text=f"{prefix}: {task['description']}",
+                **kw,
             )
         except Exception as e:
             logger.error("notify failed task=%s: %s", task["id"], e)
