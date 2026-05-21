@@ -42,21 +42,42 @@
        background:var(--btn);color:var(--btn-text);padding:9px 14px;font-size:15px}
   .ghost{background:transparent;color:var(--link);padding:6px}
   ul{list-style:none;margin:0;padding:0 8px 24px}
-  li{background:var(--sec);margin:8px;border-radius:12px;padding:10px 12px}
-  .row{display:flex;align-items:flex-start;gap:10px}
-  .chk{width:22px;height:22px;flex:none;border:2px solid var(--hint);
-       border-radius:50%;margin-top:1px}
-  .chk.done{background:var(--btn);border-color:var(--btn)}
-  .ttl{flex:1;min-width:0;word-break:break-word}
+  /* Phase 11.12: карточка задачи. Чуть больше воздуха, мягкая тень,
+     левая цветная полоска (color из списка) — как в Microsoft To Do. */
+  li{background:var(--sec);margin:6px 4px;border-radius:10px;
+    padding:12px 14px;position:relative;overflow:hidden;
+    box-shadow:0 1px 2px rgba(0,0,0,.05);
+    transition:box-shadow .15s, transform .12s}
+  li:hover{box-shadow:0 2px 8px rgba(0,0,0,.12)}
+  li.done{opacity:.7}
+  li::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;
+    background:var(--accent, transparent)}
+  .row{display:flex;align-items:center;gap:12px}
+  /* Phase 11.12: круглый чек-бокс с явной иконкой ✓ при выполнении. */
+  .chk{width:26px;height:26px;flex:none;border:2px solid var(--hint);
+       border-radius:50%;margin-top:0;cursor:pointer;
+       display:flex;align-items:center;justify-content:center;
+       transition:background .15s, border-color .15s, transform .1s;
+       color:transparent;font-size:14px;line-height:1}
+  .chk:hover{transform:scale(1.08);border-color:var(--btn)}
+  .chk.done{background:var(--btn);border-color:var(--btn);
+    color:var(--btn-text)}
+  .chk.done::after{content:"✓"}
+  .ttl{flex:1;min-width:0;word-break:break-word;font-size:15px;
+    line-height:1.35}
   .done .ttl{text-decoration:line-through;color:var(--hint)}
-  .meta{font-size:12px;color:var(--hint);margin-top:3px}
+  .meta{font-size:12px;color:var(--hint);margin-top:4px}
   .overdue .meta,.overdue .ttl{color:#e53935}
-  .star{font-size:20px;color:var(--hint);flex:none;background:none;padding:0 2px}
+  .star{font-size:22px;color:var(--hint);flex:none;background:none;
+    padding:0 4px;line-height:1;transition:transform .1s}
+  .star:hover{transform:scale(1.15)}
   .star.on{color:#f5b301}
   .mv{flex:none;background:none;color:var(--hint);font-size:12px;
-      padding:0 4px;line-height:1}
-  .drag-handle{flex:none;color:var(--hint);font-size:16px;cursor:grab;
-      padding:0 4px;line-height:1;user-select:none;touch-action:none}
+      padding:2px 4px;line-height:1}
+  .drag-handle{flex:none;color:var(--hint);font-size:18px;cursor:grab;
+      padding:0 6px;line-height:1;user-select:none;touch-action:none;
+      opacity:.5;transition:opacity .1s}
+  li:hover .drag-handle{opacity:.9}
   .drag-handle:active{cursor:grabbing}
   li.dragging{opacity:.55}
   li.drop-above{box-shadow:inset 0 3px 0 var(--btn)}
@@ -152,29 +173,42 @@
   .notes-grid{list-style:none;padding:0 12px;margin:0;display:grid;
     grid-template-columns:1fr 1fr;gap:8px}
   @media (max-width:380px){ .notes-grid{grid-template-columns:1fr} }
-  .note{background:var(--card);border-radius:12px;padding:10px;
+  .note{background:var(--card);border-radius:12px;padding:12px;
     cursor:pointer;position:relative;display:flex;flex-direction:column;
-    gap:4px;min-height:80px;border:1px solid transparent}
+    gap:6px;min-height:90px;border:1px solid transparent;
+    box-shadow:0 1px 3px rgba(0,0,0,.08);transition:transform .12s,
+      box-shadow .12s}
+  .note:hover{transform:translateY(-1px);
+    box-shadow:0 4px 10px rgba(0,0,0,.12)}
   .note.pinned{border-color:#f5b301}
-  .note .ntitle{font-weight:600;font-size:14px;word-break:break-word}
-  .note .nbody{font-size:13px;color:var(--text);
+  /* Phase 11.12: пастельный фон карточки заметки → внутри ВСЕГДА
+     тёмный текст, иначе в dark-теме var(--text) даёт белое-на-светлом. */
+  .note,
+  .note .ntitle,
+  .note .nbody,
+  .note .nmeta{color:#1f2937 !important}
+  .note .ntitle{font-weight:600;font-size:14px;word-break:break-word;
+    line-height:1.25}
+  .note .nbody{font-size:13px;line-height:1.4;
     word-break:break-word;overflow:hidden;text-overflow:ellipsis;
-    display:-webkit-box;-webkit-line-clamp:5;
+    display:-webkit-box;-webkit-line-clamp:6;
     -webkit-box-orient:vertical}
-  /* Phase 11.5: markdown в теле заметки */
-  .md a{color:#1f6feb;text-decoration:underline;word-break:break-all}
-  .md code{background:rgba(0,0,0,.08);padding:0 4px;border-radius:4px;
+  /* Phase 11.5/11.12: markdown — все цвета явные, под пастель. */
+  .md a{color:#1d4ed8 !important;text-decoration:underline;
+    word-break:break-all}
+  .md code{background:rgba(0,0,0,.08);color:#111 !important;
+    padding:0 4px;border-radius:4px;
     font-family:ui-monospace,Menlo,monospace;font-size:.92em}
   .md b{font-weight:700}
   .md i{font-style:italic}
-  .md .md-cb{display:inline-block;width:1em;color:#111;cursor:pointer;
-    user-select:none;font-size:1.05em}
+  .md .md-cb{display:inline-block;width:1em;color:#1f2937 !important;
+    cursor:pointer;user-select:none;font-size:1.05em}
   .md .md-cb:hover{transform:scale(1.15)}
-  .md .md-cb-on{color:#16a34a}
-  .md .md-done{text-decoration:line-through;opacity:.6}
-  .note .nmeta{font-size:11px;color:var(--hint);margin-top:auto}
-  .note .npin{position:absolute;top:6px;right:6px;font-size:14px;
-    color:#f5b301;opacity:.7}
+  .md .md-cb-on{color:#16a34a !important}
+  .md .md-done{text-decoration:line-through;opacity:.55}
+  .note .nmeta{font-size:11px;margin-top:auto;color:#475569 !important}
+  .note .npin{position:absolute;top:8px;right:8px;font-size:14px;
+    color:#f5b301;opacity:.9}
   /* Notes editor modal */
   .note-editor input.modal-title-input,
   .note-editor textarea.modal-body-input{width:100%;
@@ -282,55 +316,86 @@ const IS_DESKTOP = tg
   ? DESKTOP_PLATFORMS.has((tg.platform || "").toLowerCase())
   : false;
 
+function _supportsFullscreen() {
+  if (!tg || typeof tg.requestFullscreen !== "function") return false;
+  // Bot API 8.0+ — раньше метода не было. На совсем старых
+  // клиентах метод может быть undefined даже если SDK новый.
+  try {
+    return tg.isVersionAtLeast ? tg.isVersionAtLeast("8.0") : true;
+  } catch { return false; }
+}
+
 function _setupWindowMode() {
   if (!tg) return;
   tg.ready();
-  // Body-classes для CSS-хуков (Phase 11.8).
+  // Body-classes для CSS-хуков.
   document.body.classList.add(IS_DESKTOP ? "is-desktop" : "is-mobile");
 
   if (IS_DESKTOP) {
-    // 1) Вертикальный expand — забираем всю доступную высоту окна Mini App.
-    tg.expand();
-    // 2) requestFullscreen (Bot API 8.0+). На автозапуске без user-gesture
-    //    клиенты обычно отказывают, но попытка обходится дёшево.
-    //    Дополнительно прикручиваем кнопку ⛶, которая дёрнет API уже с
-    //    реальным кликом — это работает гарантированно.
-    try {
-      if (typeof tg.requestFullscreen === "function") tg.requestFullscreen();
-    } catch { /* старые клиенты — ничего страшного */ }
+    // На десктопе Mini App открывается в компактном popup'е. Делаем сразу
+    // максимально большим:
+    //   1) expand() — внутри popup'а занимает всю доступную высоту;
+    //   2) requestFullscreen() — настоящий fullscreen (Bot API 8.0+).
+    try { tg.expand(); } catch {}
+    if (_supportsFullscreen()) {
+      try { tg.requestFullscreen(); } catch {}
+    }
   }
-  // На мобиле expand() НЕ зовём — там Mini App открывается в компактной
-  // панели, пользователь сам свайпом расширит.
+  // На мобиле expand() НЕ зовём — открывается компактной панелью,
+  // пользователь сам свайпом расширит, как просили.
 
-  // Диагностика — в console видно, что и почему. Если жалоба «окно
-  // маленькое на ПК», тут будет правда: platform, viewport_height,
-  // is_expanded.
   try {
-    console.log("[mini-app] platform=%s desktop=%s viewport=%s expanded=%s",
-      tg.platform, IS_DESKTOP, tg.viewportHeight, tg.isExpanded);
+    console.log("[mini-app] platform=%s desktop=%s viewport=%s expanded=%s fs=%s",
+      tg.platform, IS_DESKTOP, tg.viewportHeight, tg.isExpanded,
+      tg.isFullscreen);
   } catch { /* SDK без этих полей — нет проблем */ }
 }
 _setupWindowMode();
 
-// Phase 11.8: ручной триггер fullscreen — нужен user-gesture, поэтому
-// показываем кнопку в шапке и навешиваем onclick. Только на десктопе.
+// Phase 11.12: рабочий toggle fullscreen на десктопе. Источник истины —
+// `tg.isFullscreen`, синхронизируется через события API 8.0:
+//   `fullscreenChanged` — успешный переход (любая сторона);
+//   `fullscreenFailed`   — клиент отказал (старая версия / уже fullscreen).
+function _updateFsButton() {
+  const btn = document.getElementById("fsBtn");
+  if (!btn || !tg || !IS_DESKTOP) return;
+  if (!_supportsFullscreen()) {
+    btn.hidden = true;   // на клиентах <8.0 кнопка бесполезна
+    return;
+  }
+  btn.hidden = false;
+  const on = !!tg.isFullscreen;
+  btn.textContent = on ? "🗗" : "⛶";
+  btn.title = on ? "Свернуть окно" : "Развернуть на весь экран";
+}
+
 function _setupFullscreenButton() {
   if (!tg || !IS_DESKTOP) return;
   const btn = document.getElementById("fsBtn");
   if (!btn) return;
-  btn.hidden = false;
+  _updateFsButton();
   btn.onclick = () => {
+    if (!_supportsFullscreen()) {
+      uiToast("Обновите Telegram до версии 11.5+ для fullscreen");
+      return;
+    }
     try {
-      tg.expand();
-      if (tg.isFullscreen && typeof tg.exitFullscreen === "function") {
-        tg.exitFullscreen();
-      } else if (typeof tg.requestFullscreen === "function") {
+      if (tg.isFullscreen) {
+        if (typeof tg.exitFullscreen === "function") tg.exitFullscreen();
+      } else {
         tg.requestFullscreen();
       }
     } catch (e) {
-      uiToast("Полноэкранный режим недоступен в этом клиенте");
+      uiToast("Не удалось переключить режим: " + (e && e.message || e));
     }
   };
+  try {
+    tg.onEvent("fullscreenChanged", _updateFsButton);
+    tg.onEvent("fullscreenFailed", () => {
+      uiToast("Telegram отказал в fullscreen (попробуйте свернуть/развернуть окно вручную)");
+      _updateFsButton();
+    });
+  } catch { /* старый SDK без onEvent для fullscreen — кнопка всё равно работает */ }
 }
 
 // initData читаем КАЖДЫЙ раз, а не один раз при загрузке: некоторые
@@ -884,6 +949,13 @@ function row(t){
   li.dataset.id = t.id;
   if (t.overdue) li.classList.add("overdue");
   if (t.completed) li.classList.add("done");
+  // Phase 11.12: цветной акцент-полоска слева — цвет берётся из списка
+  // задачи (LISTS подгружен на старте). Если задача без списка — без
+  // полосы. Помогает «глазами» сгруппировать задачи в общем виде.
+  if (t.list_id != null) {
+    const lst = LISTS.find(l => l.id === t.list_id);
+    if (lst && lst.color) li.style.setProperty("--accent", lst.color);
+  }
   li.innerHTML = `
     <div class="row">
       <span class="drag-handle" title="Перетащить">⠿</span>
