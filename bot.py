@@ -25,7 +25,7 @@ from telegram.ext import (
     filters,
 )
 
-from config import MINI_APP_URL, TELEGRAM_BOT_TOKEN
+from config import MINI_APP_URL, TELEGRAM_BOT_TOKEN, is_user_allowed
 from database import init_db
 from logsetup import setup_logging
 from scheduler import setup_scheduler
@@ -71,9 +71,28 @@ _WELCOME_TEXT = (
 )
 
 
+def _user_allowed(update: Update) -> bool:
+    """Phase 11.3: проверяет allowlist по `effective_user`."""
+    u = update.effective_user
+    if u is None:
+        return False
+    return is_user_allowed(u.id, u.username)
+
+
+_DENIED_TEXT = "Доступ к этому боту ограничен. Если это ошибка — обратись к владельцу."
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """`/start` и `/help` — одно и то же приветствие с WebApp-кнопкой."""
     if update.effective_message is None:
+        return
+    if not _user_allowed(update):
+        logger.warning(
+            "access denied (chat): user_id=%s username=%s",
+            getattr(update.effective_user, "id", None),
+            getattr(update.effective_user, "username", None),
+        )
+        await update.effective_message.reply_text(_DENIED_TEXT)
         return
     await update.effective_message.reply_text(
         _WELCOME_TEXT, reply_markup=_miniapp_keyboard()
@@ -93,6 +112,9 @@ async def fallback_text(
         return
     # Сообщения от WebApp (data) не считаются обычным текстом.
     if msg.web_app_data is not None:
+        return
+    if not _user_allowed(update):
+        await msg.reply_text(_DENIED_TEXT)
         return
     await msg.reply_text(
         "Команды бота больше не нужны — всё в Mini App.\n"

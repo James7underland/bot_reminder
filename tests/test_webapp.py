@@ -1902,3 +1902,106 @@ def test_db_import_replace_wipes_notes():
     assert counts["notes"] == 1
     bodies = [n["body"] for n in get_notes(903)]
     assert bodies == ["to-keep"]
+
+
+# --- Phase 11.3: whitelist + whoami ---
+
+def test_is_user_allowed_no_allowlist_means_open():
+    """Пустые allowlist'ы → доступ всем (старое поведение)."""
+    import config as config_mod
+    save_ids = config_mod.ALLOWED_USER_IDS
+    save_uns = config_mod.ALLOWED_USERNAMES
+    config_mod.ALLOWED_USER_IDS = set()
+    config_mod.ALLOWED_USERNAMES = set()
+    try:
+        assert config_mod.is_user_allowed(42, "anyone") is True
+        assert config_mod.is_user_allowed(None, None) is True
+    finally:
+        config_mod.ALLOWED_USER_IDS = save_ids
+        config_mod.ALLOWED_USERNAMES = save_uns
+
+
+def test_is_user_allowed_by_id_or_username():
+    import config as config_mod
+    save_ids = config_mod.ALLOWED_USER_IDS
+    save_uns = config_mod.ALLOWED_USERNAMES
+    config_mod.ALLOWED_USER_IDS = {123}
+    config_mod.ALLOWED_USERNAMES = {"e_rnst"}
+    try:
+        assert config_mod.is_user_allowed(123, None) is True
+        assert config_mod.is_user_allowed(999, "e_rnst") is True
+        assert config_mod.is_user_allowed(999, "@e_rnst") is True
+        assert config_mod.is_user_allowed(999, "someone_else") is False
+        assert config_mod.is_user_allowed(None, None) is False
+    finally:
+        config_mod.ALLOWED_USER_IDS = save_ids
+        config_mod.ALLOWED_USERNAMES = save_uns
+
+
+def test_api_returns_403_when_user_not_in_allowlist(client, monkeypatch):
+    """С активным allowlist'ом — любой эндпоинт под current_user_id даёт 403."""
+    import config as config_mod
+    monkeypatch.setattr(config_mod, "ALLOWED_USER_IDS", {99999})
+    monkeypatch.setattr(config_mod, "ALLOWED_USERNAMES", set())
+    r = client.get("/api/tasks", headers=hdr(42))   # 42 не в списке
+    assert r.status_code == 403
+
+
+def test_api_allows_user_in_allowlist(client, monkeypatch):
+    import config as config_mod
+    monkeypatch.setattr(config_mod, "ALLOWED_USER_IDS", {42})
+    monkeypatch.setattr(config_mod, "ALLOWED_USERNAMES", set())
+    r = client.get("/api/tasks", headers=hdr(42))
+    assert r.status_code == 200
+
+
+def test_api_whoami_no_init_data(client):
+    """Без X-Init-Data → ok=False, init_data_present=False."""
+    r = client.get("/api/whoami")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False
+    assert body["init_data_present"] is False
+    assert body["token_set"] is True   # в тестовом окружении токен есть
+
+
+def test_api_whoami_valid(client):
+    r = client.get("/api/whoami", headers=hdr(42))
+    body = r.json()
+    assert body["ok"] is True
+    assert body["allowlist_active"] is False   # дефолт без allowlist
+
+
+def test_api_whoami_with_allowlist_denied(client, monkeypatch):
+    import config as config_mod
+    monkeypatch.setattr(config_mod, "ALLOWED_USER_IDS", {99})
+    monkeypatch.setattr(config_mod, "ALLOWED_USERNAMES", set())
+    body = client.get("/api/whoami", headers=hdr(42)).json()
+    assert body["ok"] is True            # подпись валидна
+    assert body["allowed"] is False
+    assert body["allowlist_active"] is True
+
+
+def test_scheduler_notify_skips_disallowed_users(monkeypatch):
+    """С активным allowlist scheduler не шлёт чужим (но помечает sent)."""
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    import config as config_mod
+    import scheduler
+    monkeypatch.setattr(config_mod, "ALLOWED_USER_IDS", {42})
+
+    fake_bot = AsyncMock()
+    marked = []
+    tasks = [
+        {"id": 1, "user_id": 42, "description": "mine"},
+        {"id": 2, "user_id": 99, "description": "other"},
+    ]
+    n = asyncio.run(
+        scheduler._notify(fake_bot, tasks, "X", lambda tid: marked.append(tid))
+    )
+    # Отправили только своему; для чужого вызвали `mark`, чтобы не
+    # повторять попытку каждый тик.
+    assert n == 1
+    fake_bot.send_message.assert_awaited_once()
+    assert marked == [1, 2]

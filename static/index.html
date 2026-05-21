@@ -218,8 +218,37 @@
 
 <script>
 const tg = window.Telegram ? window.Telegram.WebApp : null;
-if (tg) { tg.ready(); tg.expand(); }
-const INIT = tg ? tg.initData : "";
+
+// Phase 11.3: режим окна — fullscreen на десктопе, маленькое окно на мобиле.
+// Telegram WebApp.platform: 'tdesktop'/'macos'/'web'/'weba'/'webk' — десктоп;
+// 'android'/'ios' — мобайл; 'unknown' — на всякий считаем мобайлом.
+function _setupWindowMode() {
+  if (!tg) return;
+  tg.ready();
+  const desktopPlatforms = new Set(
+    ["tdesktop","macos","web","weba","webk","windows","linux"]
+  );
+  const isDesktop = desktopPlatforms.has((tg.platform || "").toLowerCase());
+  if (isDesktop) {
+    tg.expand();
+    // Bot API 8.0+: настоящий fullscreen режим (десктоп). Если не
+    // поддерживается клиентом, метод просто не существует — игнор.
+    try {
+      if (typeof tg.requestFullscreen === "function") tg.requestFullscreen();
+    } catch { /* старые клиенты — ничего страшного */ }
+  }
+  // На мобиле НЕ зовём expand() — пользователь сам свайпом расширит,
+  // как просили: «маленькое окно на мобильном устройстве».
+}
+_setupWindowMode();
+
+// initData читаем КАЖДЫЙ раз, а не один раз при загрузке: некоторые
+// клиенты Telegram дозаполняют поле после `ready()` или после первого
+// тика event loop.
+function getInitData() {
+  return tg ? (tg.initData || "") : "";
+}
+const INIT = getInitData();
 
 // --- Модалы. Нативные window.alert/prompt/confirm в Telegram WebApp
 // работают нестабильно (фокус не возвращается → менюшки «залипают»).
@@ -399,7 +428,10 @@ async function api(path, opts={}) {
       ...opts,
       headers: {
         "Content-Type": "application/json",
-        "X-Init-Data": INIT,
+        // Перечитываем initData при каждом запросе (Phase 11.3): на
+        // некоторых клиентах TG поле дозаполняется уже после первого
+        // тика; снимок при загрузке мог быть пустым.
+        "X-Init-Data": getInitData() || INIT,
         ...(opts.headers || {}),
       },
     });
@@ -409,9 +441,33 @@ async function api(path, opts={}) {
     throw e;
   }
   if (r.status === 401) {
+    // Phase 11.3: вместо пустого «Откройте из Telegram» — даём
+    // диагностику. Чаще всего issue в одной из двух точек:
+    //   1) initData пуст → запустили вне Telegram
+    //   2) hash mismatch → токен в .env не совпадает с подписью TG
+    //      (бот пересоздавался, .env не обновили)
+    const initLen = (getInitData() || "").length;
+    const platform = tg ? (tg.platform || "?") : "no-tg";
     document.body.innerHTML =
-      '<div class="muted">Откройте приложение из Telegram.</div>';
+      '<div class="muted" style="text-align:left;padding:24px">' +
+      '<b>Не получилось авторизоваться (401).</b><br><br>' +
+      'Проверьте:<br>' +
+      '• Открыли Mini App через кнопку в чате с ботом<br>' +
+      '• На сервере в <code>.env</code> правильный <code>TELEGRAM_BOT_TOKEN</code><br>' +
+      '• Ваш telegram-id есть в <code>ALLOWED_USER_IDS</code><br><br>' +
+      '<small>platform: ' + platform + ' · initData length: ' + initLen + '</small>' +
+      '</div>';
     throw new Error("unauthorized");
+  }
+  if (r.status === 403) {
+    document.body.innerHTML =
+      '<div class="muted" style="padding:24px">' +
+      '<b>Доступ запрещён.</b><br><br>' +
+      'Этот бот ограничен по списку пользователей. Если это ваш бот — ' +
+      'добавьте свой telegram-id в <code>ALLOWED_USER_IDS</code> в ' +
+      '<code>.env</code> и перезапустите <code>bot_webapp</code>.' +
+      '</div>';
+    throw new Error("forbidden");
   }
   if (r.status === 204) return null;
   // 5xx / 4xx (кроме 401) — показываем серверный detail, иначе сам код.

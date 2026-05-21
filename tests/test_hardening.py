@@ -72,3 +72,45 @@ async def test_fallback_text_no_message_is_noop():
     u = MagicMock()
     u.effective_message = None
     await bot.fallback_text(u, MagicMock())   # не должно бросить
+
+
+# --- Phase 11.3: whitelist в боте ---
+
+async def test_start_denies_user_not_in_allowlist(monkeypatch):
+    import config as config_mod
+    monkeypatch.setattr(config_mod, "ALLOWED_USER_IDS", {99})
+    monkeypatch.setattr(config_mod, "ALLOWED_USERNAMES", set())
+    u = _mk_update()
+    u.effective_user = MagicMock()
+    u.effective_user.id = 42
+    u.effective_user.username = "stranger"
+    await bot.start(u, MagicMock())
+    u.effective_message.reply_text.assert_awaited_once()
+    assert "ограничен" in u.effective_message.reply_text.call_args.args[0]
+
+
+async def test_start_allows_user_in_allowlist(monkeypatch):
+    import config as config_mod
+    monkeypatch.setattr(config_mod, "ALLOWED_USER_IDS", set())
+    monkeypatch.setattr(config_mod, "ALLOWED_USERNAMES", {"e_rnst"})
+    u = _mk_update()
+    u.effective_user = MagicMock()
+    u.effective_user.id = 42
+    u.effective_user.username = "e_rnst"
+    await bot.start(u, MagicMock())
+    # Получил приветствие с WebApp-кнопкой
+    args, kwargs = u.effective_message.reply_text.call_args
+    assert "Mini App" in args[0]
+    assert kwargs.get("reply_markup") is not None
+
+
+async def test_fallback_denies_user_not_in_allowlist(monkeypatch):
+    import config as config_mod
+    monkeypatch.setattr(config_mod, "ALLOWED_USER_IDS", {99})
+    monkeypatch.setattr(config_mod, "ALLOWED_USERNAMES", set())
+    u = _mk_update(text="any text")
+    u.effective_user = MagicMock()
+    u.effective_user.id = 42
+    u.effective_user.username = "stranger"
+    await bot.fallback_text(u, MagicMock())
+    assert "ограничен" in u.effective_message.reply_text.call_args.args[0]

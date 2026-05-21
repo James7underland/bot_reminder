@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+import config
 from config import SCHEDULER_CHECK_INTERVAL
 from database import (
     get_due_reminders,
@@ -30,9 +31,21 @@ async def _notify(bot, tasks, prefix, mark) -> int:
 
     Анти-дубль: успех → `mark(task_id)`. Ошибка отправки → НЕ помечаем
     (повтор на следующем тике, приоритет — доставить).
+
+    Phase 11.3: если задан `ALLOWED_USER_IDS`, фильтруем задачи чужих
+    пользователей (их Telegram заблокирует/мы не имеем права писать
+    им). Username проверять не можем (нет в БД), поэтому пропускаем
+    только по ID-allowlist; если он пуст — рассылаем всем (старое
+    поведение).
     """
+    allowed_ids = config.ALLOWED_USER_IDS
     sent = 0
     for task in tasks:
+        if allowed_ids and task["user_id"] not in allowed_ids:
+            # Помечаем как отправленное, чтобы не пытались на каждом
+            # тике (вызовет flood-stop на стороне бота).
+            mark(task["id"])
+            continue
         try:
             await bot.send_message(
                 chat_id=task["user_id"],
