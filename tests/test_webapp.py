@@ -2402,3 +2402,121 @@ def test_api_archive_endpoint(client):
     assert a not in [t["id"] for t in archive]
     # 401 без авторизации
     assert client.get("/api/archive").status_code == 401
+
+
+# --- Phase 11.19: напоминания для заметок ---
+
+def test_db_set_note_reminder_and_query_due():
+    from database import (
+        add_note,
+        get_due_note_reminders,
+        get_note,
+        mark_note_reminder_sent,
+        set_note_reminder,
+    )
+    nid = add_note(5000, "ping me")
+    # Прошлое время → due сразу
+    assert set_note_reminder(nid, "2020-01-01 00:00:00") is True
+    assert get_note(nid)["reminder_at"] == "2020-01-01 00:00:00"
+    due = get_due_note_reminders("2026-12-31 00:00:00")
+    assert [n["id"] for n in due] == [nid]
+    # Mark sent
+    assert mark_note_reminder_sent(nid) is True
+    assert get_due_note_reminders("2026-12-31 00:00:00") == []
+    # Снять напоминание
+    assert set_note_reminder(nid, None) is True
+    assert get_note(nid)["reminder_at"] is None
+    # Несуществующая заметка
+    assert set_note_reminder(999999, "2026-01-01 00:00:00") is False
+    assert mark_note_reminder_sent(999999) is False
+
+
+def test_db_due_note_reminders_excludes_deleted_and_future():
+    from database import (
+        add_note,
+        delete_note,
+        get_due_note_reminders,
+        set_note_reminder,
+    )
+    a = add_note(5001, "delete me later")
+    b = add_note(5001, "future")
+    set_note_reminder(a, "2020-01-01 00:00:00")
+    set_note_reminder(b, "2099-01-01 00:00:00")
+    delete_note(a)
+    due = get_due_note_reminders("2026-01-01 00:00:00")
+    # `a` удалена → исключена; `b` в будущем → не due.
+    assert due == []
+
+
+def test_api_patch_note_with_reminder(client):
+    """PATCH /api/notes/{id} устанавливает и снимает reminder_at."""
+    nid = client.post(
+        "/api/notes", json={"body": "ping"}, headers=hdr()
+    ).json()["id"]
+    # Поставить напоминание
+    r = client.patch(
+        f"/api/notes/{nid}",
+        json={"reminder_at": "2030-01-01 09:00"}, headers=hdr(),
+    )
+    assert r.status_code == 200 and r.json()["reminder_at"]
+    # Очистить
+    r2 = client.patch(
+        f"/api/notes/{nid}", json={"clear_reminder": True}, headers=hdr()
+    )
+    assert r2.status_code == 200 and r2.json()["reminder_at"] is None
+    # Чужая → 404
+    assert client.patch(
+        f"/api/notes/{nid}",
+        json={"reminder_at": "2030-01-01 09:00"}, headers=hdr(99),
+    ).status_code == 404
+
+
+def test_api_patch_note_only_reminder_no_other_changes(client):
+    """Если в PATCH только reminder/clear_reminder — это валидно (не 422)."""
+    nid = client.post(
+        "/api/notes", json={"body": "x"}, headers=hdr()
+    ).json()["id"]
+    r = client.patch(
+        f"/api/notes/{nid}",
+        json={"reminder_at": "2030-05-05 12:00"}, headers=hdr(),
+    )
+    assert r.status_code == 200
+
+
+def test_scheduler_sends_note_reminder(monkeypatch):
+    """Phase 11.19: check_and_send_reminders теперь поднимает заметки."""
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    import config as config_mod
+    save_ids = config_mod.ALLOWED_USER_IDS
+    config_mod.ALLOWED_USER_IDS = set()
+    try:
+        from database import (
+            add_note,
+            get_note,
+            set_note_reminder,
+        )
+        from scheduler import check_and_send_reminders
+        nid = add_note(5002, "drink water")
+        set_note_reminder(nid, "2020-01-01 00:00:00")
+        fake_bot = AsyncMock()
+        n = asyncio.run(check_and_send_reminders(fake_bot))
+        assert n >= 1
+        # Отправили текст с префиксом «📓 Заметка».
+        sent_args = [c for c in fake_bot.send_message.await_args_list
+                     if c.kwargs.get("chat_id") == 5002]
+        assert sent_args
+        text = sent_args[0].kwargs["text"]
+        assert "📓 Заметка" in text
+        # reminder_sent помечен — повторный вызов ничего не шлёт.
+        assert get_note(nid)["reminder_sent"] == 1
+        fake_bot.reset_mock()
+        m = asyncio.run(check_and_send_reminders(fake_bot))
+        # Может быть >0 для других тестов, но для нашей заметки — нет.
+        sent2 = [c for c in fake_bot.send_message.await_args_list
+                 if c.kwargs.get("chat_id") == 5002]
+        assert not sent2
+        del m
+    finally:
+        config_mod.ALLOWED_USER_IDS = save_ids
