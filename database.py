@@ -1341,6 +1341,120 @@ def reorder_task(task_id: int, after_task_id: int | None) -> bool:
     return True
 
 
+_BULK_ACTIONS = frozenset({
+    "complete", "uncomplete", "star", "unstar", "move",
+})
+
+
+def bulk_update_tasks(
+    user_id: int,
+    task_ids: list[int],
+    action: str,
+    list_id: int | None = None,
+) -> int:
+    """
+    Phase 11.4: пакетное действие над списком задач (Mini App
+    multi-select). Возвращает число применённых строк. Безопасно:
+    фильтрует по `user_id`, чтобы нельзя было трогать чужие задачи
+    подсунутыми ID. Всё в одной транзакции.
+
+    Поддерживаемые `action`:
+      complete   — completed=1 (запускает рекуррентность через
+                   complete_task для каждой подходящей задачи);
+      uncomplete — completed=0;
+      star       — important=1;
+      unstar     — important=0;
+      move       — `list_id` (None → «без списка»). Если `list_id` —
+                   id чужого/удалённого списка, действие отвергается.
+    """
+    if action not in _BULK_ACTIONS:
+        raise ValueError(f"unknown bulk action: {action!r}")
+    if not task_ids:
+        return 0
+    # Уникализируем и фильтруем мусор (str, отрицательные и т.д.).
+    clean_ids = []
+    seen = set()
+    for tid in task_ids:
+        if not isinstance(tid, int) or tid <= 0 or tid in seen:
+            continue
+        seen.add(tid)
+        clean_ids.append(tid)
+    if not clean_ids:
+        return 0
+    placeholders = ",".join("?" * len(clean_ids))
+
+    # complete нельзя через простой UPDATE: для рекуррентных нужно
+    # породить следующий экземпляр. Делаем поштучно через
+    # `complete_task`, но в фильтре user_id.
+    if action == "complete":
+        conn = get_connection()
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(
+            f"SELECT id FROM tasks WHERE user_id = ? "
+            f"AND completed = 0 AND id IN ({placeholders})",
+            (user_id, *clean_ids),
+        )
+        own_ids = [r["id"] for r in cursor.fetchall()]
+        conn.close()
+        affected = 0
+        for tid in own_ids:
+            if complete_task(tid) is not None:
+                affected += 1
+        if affected:
+            logger.info(
+                "bulk complete user=%s ids=%s affected=%d",
+                user_id, own_ids, affected,
+            )
+        return affected
+
+    # Остальные — одним UPDATE.
+    if action == "move":
+        if list_id is not None:
+            # Проверяем, что список свой и активный.
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT 1 FROM lists WHERE id = ? AND user_id = ? "
+                "AND deleted_at IS NULL",
+                (list_id, user_id),
+            )
+            if cursor.fetchone() is None:
+                conn.close()
+                raise ValueError(
+                    f"list_id={list_id} not found / not yours / deleted"
+                )
+            conn.close()
+        sql_assign = "list_id = ?"
+        params: list = [list_id]
+    elif action == "uncomplete":
+        sql_assign = "completed = 0"
+        params = []
+    elif action == "star":
+        sql_assign = "important = 1"
+        params = []
+    else:   # "unstar"
+        sql_assign = "important = 0"
+        params = []
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        f"UPDATE tasks SET {sql_assign} WHERE user_id = ? "
+        f"AND id IN ({placeholders})",
+        (*params, user_id, *clean_ids),
+    )
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if affected:
+        logger.info(
+            "bulk %s user=%s ids=%s affected=%d",
+            action, user_id, clean_ids, affected,
+        )
+    return affected
+
+
 # --- Здоровье / статистика (Фаза 10.3) ---
 
 def db_ping() -> bool:

@@ -114,6 +114,21 @@
   .toast-action{background:transparent;color:#60a5fa;border:none;
     font-weight:600;padding:0;cursor:pointer}
   .toast-action:hover{text-decoration:underline}
+  /* Phase 11.4: bulk-actions bar + selection visuals */
+  .bulk-bar{display:flex;gap:8px;align-items:center;
+    padding:8px 16px;background:var(--card);
+    border-bottom:1px solid var(--hint);position:sticky;top:0;z-index:50}
+  .bulk-bar #bulkCount{flex:1;font-size:14px;color:var(--text)}
+  .bulk-bar button{padding:6px 10px;font-size:16px}
+  body.select-mode .drag-handle,
+  body.select-mode .mv,
+  body.select-mode .star{display:none}
+  body.select-mode .chk{pointer-events:none;opacity:.5}
+  li.li-sel{outline:2px solid var(--btn);outline-offset:-2px}
+  li.li-sel::after{content:"✓";position:absolute;top:50%;right:12px;
+    transform:translateY(-50%);color:var(--btn);font-weight:700;
+    font-size:18px;pointer-events:none}
+  #list li{position:relative}
   /* Phase 11.2: section tabs + notes grid */
   .bar.tabs{padding-top:0;padding-bottom:0;gap:0;border-bottom:1px solid var(--card)}
   .tab{flex:1;background:none;color:var(--hint);font-weight:600;
@@ -198,6 +213,16 @@
     <label style="color:var(--hint);font-size:13px">
       <input type="checkbox" id="showDone"> с выполненными
     </label>
+  </div>
+  <!-- Phase 11.4: панель действий для multi-select. Появляется
+       над списком, когда selectMode=true. -->
+  <div id="bulkBar" class="bulk-bar" hidden>
+    <button id="bulkCancel" class="ghost" title="Отмена">✕</button>
+    <span id="bulkCount">0 выбрано</span>
+    <button id="bulkDone" title="Отметить выполненными">✓</button>
+    <button id="bulkStar" title="Важные">★</button>
+    <button id="bulkUnstar" title="Снять «важно»">☆</button>
+    <button id="bulkMove" title="В список…">📁</button>
   </div>
   <ul id="list"></ul>
   <div id="empty" class="muted" hidden>Пока нет задач</div>
@@ -553,6 +578,10 @@ async function load(){
     !$("#sortSel").value;
   if (dragEnabled) attachDragDrop(ul);
   refreshStats();
+  // Phase 11.4: после повторного рендера восстанавливаем подсветку
+  // выделенных задач (id могут переехать в смежных тасках при
+  // редактировании, но базово set остаётся в силе).
+  if (selectMode) refreshSelectionUI();
 }
 
 // Phase 10.8: маленький значок в шапке. Обновляется после load() и
@@ -589,6 +618,70 @@ $("#statsBadge").onclick = async () => {
     + `Открытых подзадач: ${s.steps_open}\n`
     + `Самая старая активная создана: ${fmtAge}`
   );
+};
+
+// --- Phase 11.4: multi-select / bulk actions ---
+
+let selectMode = false;
+const selectedIds = new Set();
+
+function enterSelectMode(firstId) {
+  selectMode = true;
+  selectedIds.clear();
+  if (firstId != null) selectedIds.add(firstId);
+  document.body.classList.add("select-mode");
+  $("#bulkBar").hidden = false;
+  // Закрываем все открытые панели задач, чтобы не путались.
+  document.querySelectorAll(".panel.open").forEach(p =>
+    p.classList.remove("open"));
+  refreshSelectionUI();
+}
+
+function exitSelectMode() {
+  selectMode = false;
+  selectedIds.clear();
+  document.body.classList.remove("select-mode");
+  $("#bulkBar").hidden = true;
+  document.querySelectorAll("li.li-sel").forEach(el =>
+    el.classList.remove("li-sel"));
+}
+
+function toggleSelect(id) {
+  if (selectedIds.has(id)) selectedIds.delete(id);
+  else selectedIds.add(id);
+  if (selectedIds.size === 0) { exitSelectMode(); return; }
+  refreshSelectionUI();
+}
+
+function refreshSelectionUI() {
+  document.querySelectorAll("#list li").forEach(el => {
+    const id = parseInt(el.dataset.id, 10);
+    el.classList.toggle("li-sel", selectedIds.has(id));
+  });
+  $("#bulkCount").textContent = `${selectedIds.size} выбрано`;
+}
+
+async function bulkAction(action, extra = {}) {
+  if (!selectedIds.size) return;
+  const body = {ids: [...selectedIds], action, ...extra};
+  await api("/tasks/bulk", {method: "POST", body: JSON.stringify(body)});
+  exitSelectMode();
+  load();
+}
+
+$("#bulkCancel").onclick = exitSelectMode;
+$("#bulkDone").onclick = () => bulkAction("complete");
+$("#bulkStar").onclick = () => bulkAction("star");
+$("#bulkUnstar").onclick = () => bulkAction("unstar");
+$("#bulkMove").onclick = async () => {
+  // Используем uiSelect (есть с Phase 10.5) для выбора списка.
+  const opts = [{value: "0", label: "📭 Без списка"}].concat(
+    LISTS.map(l => ({value: String(l.id), label: l.name, group: ""}))
+  );
+  const picked = await uiSelect("Переместить в список", opts);
+  if (picked === null) return;
+  const list_id = picked === "0" ? null : parseInt(picked, 10);
+  await bulkAction("move", {list_id});
 };
 
 function attachDragDrop(ul){
@@ -801,14 +894,60 @@ function row(t){
       </div>`).join("");
   }
 
-  $(".ttl", li).onclick = () => {
+  $(".ttl", li).onclick = (e) => {
+    // Phase 11.4: в режиме мульти-выбора клик по тексту тоже toggle'ит.
+    if (selectMode) {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleSelect(t.id);
+      return;
+    }
     const p = $(".panel", li);
     p.classList.toggle("open");
     if (p.classList.contains("open") &&
         $(".steps", li).dataset.loaded === "0") refreshSteps();
   };
+  // Phase 11.4: long-press по `.ttl` → вход в режим мульти-выбора.
+  let _lpTimer = null;
+  let _lpX = 0, _lpY = 0;
+  const _ttl = $(".ttl", li);
+  _ttl.addEventListener("pointerdown", (e) => {
+    if (selectMode) return;
+    _lpX = e.clientX; _lpY = e.clientY;
+    _lpTimer = setTimeout(() => {
+      _lpTimer = null;
+      if (tg && tg.HapticFeedback) {
+        try { tg.HapticFeedback.impactOccurred("medium"); } catch {}
+      }
+      enterSelectMode(t.id);
+    }, 500);
+  });
+  const _cancelLP = (e) => {
+    if (_lpTimer && e && (Math.abs(e.clientX - _lpX) > 10 ||
+                          Math.abs(e.clientY - _lpY) > 10)) {
+      clearTimeout(_lpTimer); _lpTimer = null;
+    }
+  };
+  _ttl.addEventListener("pointermove", _cancelLP);
+  _ttl.addEventListener("pointerup", () => {
+    if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
+  });
+  _ttl.addEventListener("pointercancel", () => {
+    if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
+  });
+
   li._refreshSteps = refreshSteps;
   li.addEventListener("click", async (e) => {
+    // Phase 11.4: в режиме мульти-выбора игнорируем кнопки-действия,
+    // любой клик по строке = toggle selection (если не по .ttl, который
+    // уже сам обработан выше).
+    if (selectMode) {
+      if (!e.target.closest(".ttl")) {
+        e.preventDefault();
+        toggleSelect(t.id);
+      }
+      return;
+    }
     const act = e.target.dataset.act;
     if (!act) return;
     if (act === "toggle") {
