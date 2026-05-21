@@ -593,6 +593,16 @@ Mini App» + «Нужно добавить раздел с заметками (�
   вырезаны handler-тесты — DB-слой остаётся, пользовательские сценарии
   живут в `test_webapp.py`. Планировщик (рассылка напоминаний и
   purge soft-deleted) сохранён. 196 тестов, TOTAL 99.30%.
+- **11.13 ✅ (PR #56):** Fullscreen — двухуровневая стратегия. (a)
+  Сначала пробуем `tg.requestFullscreen()` (Bot API 8.0, TG Desktop
+  11.5+). (b) Если не поддержано / отказало — fallback на нативный
+  `document.documentElement.requestFullscreen()` (Chromium-based TG
+  Desktop его честно поддерживает; срабатывает при user-gesture клика
+  ⛶). `_isFullscreen()` объединяет оба индикатора. Слушаются и
+  `tg.onEvent('fullscreenChanged'/'fullscreenFailed')`, и
+  `document.fullscreenchange` — иконка ⛶↔🗗 синхронизируется в обоих
+  случаях. Также убрано `body.is-desktop {max-width: 760px}` — оно
+  оставляло чёрные поля по бокам даже в OS-fullscreen.
 - **11.12 ✅ (PR #55):** Контраст заметок + рабочий fullscreen + дизайн-полировка.
   (a) Заметки: внутри карточки ВСЕ тексты принудительно `#1f2937`
   (title), `#475569` (meta), `#1d4ed8` (ссылки), `#16a34a` (✓-чекбоксы)
