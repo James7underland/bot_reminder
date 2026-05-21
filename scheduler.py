@@ -20,6 +20,7 @@ from database import (
     mark_reminder_sent,
     purge_deleted_lists,
     purge_deleted_notes,
+    purge_deleted_tasks,
 )
 
 logger = logging.getLogger(__name__)
@@ -102,9 +103,9 @@ async def check_and_send_reminders(bot, now: datetime | None = None) -> int:
 
 def _purge_old_soft_deletes() -> None:
     """
-    Phase 10.7 + 11.2: раз в час физически удаляет soft-deleted
-    списки и заметки старше 24 часов. Каждый purge — в отдельном
-    try/except, чтобы ошибка одного не блокировала второй.
+    Phase 10.7 + 11.2 + 11.10: раз в час физически удаляет soft-deleted
+    списки, заметки и задачи старше 24 часов. Каждый purge — в
+    отдельном try/except, чтобы ошибка одного не блокировала остальные.
     """
     try:
         purge_deleted_lists(older_than_hours=24)
@@ -114,6 +115,10 @@ def _purge_old_soft_deletes() -> None:
         purge_deleted_notes(older_than_hours=24)
     except Exception as e:
         logger.error("purge_deleted_notes failed: %s", e)
+    try:
+        purge_deleted_tasks(older_than_hours=24)
+    except Exception as e:
+        logger.error("purge_deleted_tasks failed: %s", e)
 
 
 def setup_scheduler(application) -> AsyncIOScheduler:

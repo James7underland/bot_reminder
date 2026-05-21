@@ -593,6 +593,21 @@ Mini App» + «Нужно добавить раздел с заметками (�
   вырезаны handler-тесты — DB-слой остаётся, пользовательские сценарии
   живут в `test_webapp.py`. Планировщик (рассылка напоминаний и
   purge soft-deleted) сохранён. 196 тестов, TOTAL 99.30%.
+- **11.10 ✅ (PR #53):** Soft-delete задач с undo. БД: колонка
+  `tasks.deleted_at` (миграция + CREATE TABLE). `delete_task` /
+  `restore_task` (idempotent) / `purge_deleted_tasks(hours=24)`
+  (одной транзакцией; подзадачи каскадом по FK). Все SELECT'ы списка
+  фильтруют `deleted_at IS NULL`: `get_tasks`, `get_tasks_by_list`,
+  `get_myday`, `get_planned`, `get_important_tasks`, `search_tasks`,
+  `get_due_reminders`, `get_overdue_tasks`, `get_steps_counts`,
+  `get_user_stats`, `_move_task`/`reorder_task`, `bulk_update_tasks`,
+  `get_tasks_linked_to_note`, `export_user_data`. Scheduler job
+  `purge_deleted` теперь чистит и задачи (отдельный try/except).
+  Webapp: `DELETE /api/tasks/{id}` → soft, `POST /api/tasks/{id}/
+  restore` → undo (404 на активную/чужую), `_require_own_task` теперь
+  отвергает soft-deleted (кроме restore). Фронтенд: кнопка
+  «🗑 Удалить» (красная) в панели задачи; после клика — `uiUndoToast`
+  с превью описания, «Отменить» возвращает за 8 сек. 245 тестов.
 - **11.9 ✅ (PR #52):** Клик-по-чекбоксу в карточках заметок.
   `mdToHtml` теперь объединяет регексп для `- [ ]` / `- [x]` и
   присваивает каждому чек-боксу последовательный `data-cb`. На клик в
