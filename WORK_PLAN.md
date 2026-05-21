@@ -593,6 +593,16 @@ Mini App» + «Нужно добавить раздел с заметками (�
   вырезаны handler-тесты — DB-слой остаётся, пользовательские сценарии
   живут в `test_webapp.py`. Планировщик (рассылка напоминаний и
   purge soft-deleted) сохранён. 196 тестов, TOTAL 99.30%.
+- **11.11 ✅ (PR #54):** Архив выполненных + меню команд бота.
+  (a) `get_archived_tasks(user_id)` — выполненные (без soft-deleted),
+  сортировка по `id DESC` (приближённо порядок завершения, без
+  отдельной колонки `completed_at`). API `GET /api/archive` (с
+  decorate'ом и steps-counts). Frontend: новая опция «🗂 Архив»
+  в `#viewSel`; drag/manual-order в архиве отключён. (b) Bot: в
+  `main()` через `post_init` пост-инициализация дёргает
+  `bot.set_my_commands` со списком `[/start, /help]` — теперь
+  Telegram-автокомплит `/` показывает их подсказки. Обёрнуто в
+  try/except, чтобы не валить старт. 248 тестов.
 - **11.10 ✅ (PR #53):** Soft-delete задач с undo. БД: колонка
   `tasks.deleted_at` (миграция + CREATE TABLE). `delete_task` /
   `restore_task` (idempotent) / `purge_deleted_tasks(hours=24)`

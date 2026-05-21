@@ -236,6 +236,7 @@
       <option value="myday">🗓 Мой день</option>
       <option value="planned">📅 Планируется</option>
       <option value="important">⭐ Важно</option>
+      <option value="archive">🗂 Архив</option>
     </select>
     <label style="color:var(--hint);font-size:13px">
       <input type="checkbox" id="showDone"> с выполненными
@@ -624,6 +625,8 @@ async function load(){
     tasks = await api("/planned");
   } else if (view === "important") {
     tasks = await api("/important");
+  } else if (view === "archive") {
+    tasks = await api("/archive");
   } else {
     let q = "?completed=" + ($("#showDone").checked ? "true" : "false");
     if (listId !== "all") q += "&list_id=" + listId;
@@ -639,7 +642,7 @@ async function load(){
   // В smart-views (myday/planned/important) и при поиске список
   // отсортирован по другим критериям, drag сбил бы порядок.
   const dragEnabled = !sq &&
-    !["myday","planned","important"].includes(view) &&
+    !["myday","planned","important","archive"].includes(view) &&
     !$("#sortSel").value;
   if (dragEnabled) attachDragDrop(ul);
   refreshStats();
