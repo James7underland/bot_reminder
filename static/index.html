@@ -18,11 +18,11 @@
   *{box-sizing:border-box}
   body{margin:0;font:15px/1.4 -apple-system,system-ui,sans-serif;
        background:var(--bg);color:var(--text)}
-  /* Phase 11.8: на десктопе центрируем содержимое в комфортной ширине,
-     иначе на широких мониторах список «растягивается» через весь экран
-     и читать неудобно. На мобиле ширину не ограничиваем. */
-  body.is-desktop{max-width:760px;margin-left:auto;margin-right:auto;
-    box-shadow:0 0 0 1px var(--card)}
+  /* Phase 11.13: убираем фиксированный max-width — на десктопе body
+     должно занимать ВСЁ доступное пространство (особенно в fullscreen,
+     иначе виден столбик 760px по центру и пустые поля). Содержимое
+     центрируем через flex/grid, если потребуется на очень широких
+     экранах. */
   .fs-btn{font-size:16px;padding:4px 8px;line-height:1}
   body.is-mobile .fs-btn{display:none}
   header{padding:14px 16px 6px;font-size:22px;font-weight:700;
@@ -316,86 +316,132 @@ const IS_DESKTOP = tg
   ? DESKTOP_PLATFORMS.has((tg.platform || "").toLowerCase())
   : false;
 
-function _supportsFullscreen() {
+// Phase 11.13: двухуровневая стратегия fullscreen.
+// 1) tg.requestFullscreen() — Bot API 8.0+ (Telegram Desktop 11.5+).
+//    Преимущество: интегрирован с UI Telegram; работает корректно
+//    в мобильном клиенте (там, по крайней мере, в теории — на iOS
+//    fullscreen блокируется системой).
+// 2) document.documentElement.requestFullscreen() — нативный браузерный
+//    Fullscreen API. Telegram Desktop = Chromium-based, поэтому работает
+//    всегда при наличии user-gesture (клика). Telegram Web — то же.
+//    Не работает в iOS Safari/Telegram-iOS (Apple запрещает).
+function _tgFsSupported() {
   if (!tg || typeof tg.requestFullscreen !== "function") return false;
-  // Bot API 8.0+ — раньше метода не было. На совсем старых
-  // клиентах метод может быть undefined даже если SDK новый.
   try {
     return tg.isVersionAtLeast ? tg.isVersionAtLeast("8.0") : true;
   } catch { return false; }
+}
+function _browserFsSupported() {
+  return !!(document.documentElement.requestFullscreen ||
+            document.documentElement.webkitRequestFullscreen);
+}
+function _browserFsActive() {
+  return !!(document.fullscreenElement || document.webkitFullscreenElement);
+}
+async function _enterFullscreen() {
+  // Пробуем TG-нативный путь; если не поддержан или провалился —
+  // браузерный API. Возвращает true, если хоть один путь сработал.
+  if (_tgFsSupported()) {
+    try { tg.requestFullscreen(); return true; }
+    catch { /* fall through */ }
+  }
+  if (_browserFsSupported()) {
+    try {
+      const el = document.documentElement;
+      const req = el.requestFullscreen || el.webkitRequestFullscreen;
+      await req.call(el);
+      return true;
+    } catch (e) {
+      console.warn("[mini-app] browser fullscreen failed:", e);
+      return false;
+    }
+  }
+  return false;
+}
+async function _exitFullscreen() {
+  if (_tgFsSupported() && tg.isFullscreen) {
+    try { tg.exitFullscreen(); return true; }
+    catch { /* fall through */ }
+  }
+  if (document.exitFullscreen) {
+    try { await document.exitFullscreen(); return true; }
+    catch { /* ignore */ }
+  } else if (document.webkitExitFullscreen) {
+    try { document.webkitExitFullscreen(); return true; }
+    catch { /* ignore */ }
+  }
+  return false;
+}
+function _isFullscreen() {
+  return (tg && tg.isFullscreen) || _browserFsActive();
 }
 
 function _setupWindowMode() {
   if (!tg) return;
   tg.ready();
-  // Body-classes для CSS-хуков.
   document.body.classList.add(IS_DESKTOP ? "is-desktop" : "is-mobile");
 
   if (IS_DESKTOP) {
-    // На десктопе Mini App открывается в компактном popup'е. Делаем сразу
-    // максимально большим:
-    //   1) expand() — внутри popup'а занимает всю доступную высоту;
-    //   2) requestFullscreen() — настоящий fullscreen (Bot API 8.0+).
+    // На десктопе сразу максимизируем popup TG (expand).
     try { tg.expand(); } catch {}
-    if (_supportsFullscreen()) {
+    // tg.requestFullscreen() пытается, но без user-gesture часто
+    // отказывает. Это OK — у пользователя есть кнопка ⛶, она
+    // дёрнет fullscreen уже с реальным кликом (см. _enterFullscreen).
+    if (_tgFsSupported()) {
       try { tg.requestFullscreen(); } catch {}
     }
   }
-  // На мобиле expand() НЕ зовём — открывается компактной панелью,
-  // пользователь сам свайпом расширит, как просили.
 
   try {
-    console.log("[mini-app] platform=%s desktop=%s viewport=%s expanded=%s fs=%s",
-      tg.platform, IS_DESKTOP, tg.viewportHeight, tg.isExpanded,
-      tg.isFullscreen);
+    console.log(
+      "[mini-app] platform=%s ver=%s desktop=%s viewport=%s expanded=%s "
+        + "tg_fs=%s tg_fs_supported=%s browser_fs_supported=%s",
+      tg.platform, tg.version, IS_DESKTOP, tg.viewportHeight, tg.isExpanded,
+      tg.isFullscreen, _tgFsSupported(), _browserFsSupported(),
+    );
   } catch { /* SDK без этих полей — нет проблем */ }
 }
 _setupWindowMode();
 
-// Phase 11.12: рабочий toggle fullscreen на десктопе. Источник истины —
-// `tg.isFullscreen`, синхронизируется через события API 8.0:
-//   `fullscreenChanged` — успешный переход (любая сторона);
-//   `fullscreenFailed`   — клиент отказал (старая версия / уже fullscreen).
 function _updateFsButton() {
   const btn = document.getElementById("fsBtn");
-  if (!btn || !tg || !IS_DESKTOP) return;
-  if (!_supportsFullscreen()) {
-    btn.hidden = true;   // на клиентах <8.0 кнопка бесполезна
-    return;
-  }
-  btn.hidden = false;
-  const on = !!tg.isFullscreen;
+  if (!btn || !IS_DESKTOP) return;
+  // На десктопе всегда показываем кнопку: она хоть и через
+  // браузерный API, но fullscreen сработает.
+  btn.hidden = !(_tgFsSupported() || _browserFsSupported());
+  const on = _isFullscreen();
   btn.textContent = on ? "🗗" : "⛶";
   btn.title = on ? "Свернуть окно" : "Развернуть на весь экран";
 }
 
 function _setupFullscreenButton() {
-  if (!tg || !IS_DESKTOP) return;
+  if (!IS_DESKTOP) return;
   const btn = document.getElementById("fsBtn");
   if (!btn) return;
   _updateFsButton();
-  btn.onclick = () => {
-    if (!_supportsFullscreen()) {
-      uiToast("Обновите Telegram до версии 11.5+ для fullscreen");
-      return;
-    }
-    try {
-      if (tg.isFullscreen) {
-        if (typeof tg.exitFullscreen === "function") tg.exitFullscreen();
-      } else {
-        tg.requestFullscreen();
+  btn.onclick = async () => {
+    if (_isFullscreen()) {
+      const ok = await _exitFullscreen();
+      if (!ok) uiToast("Не удалось выйти из fullscreen");
+    } else {
+      const ok = await _enterFullscreen();
+      if (!ok) {
+        uiToast("Полноэкранный режим недоступен. Попробуйте обновить Telegram.");
       }
-    } catch (e) {
-      uiToast("Не удалось переключить режим: " + (e && e.message || e));
     }
+    setTimeout(_updateFsButton, 200);
   };
+  // События TG и браузера — обе синхронизируют иконку.
   try {
     tg.onEvent("fullscreenChanged", _updateFsButton);
     tg.onEvent("fullscreenFailed", () => {
-      uiToast("Telegram отказал в fullscreen (попробуйте свернуть/развернуть окно вручную)");
+      // Не показываем тост на TG-провал — переходим на браузерный
+      // API при клике; в авто-режиме fail тихо игнорируем.
       _updateFsButton();
     });
-  } catch { /* старый SDK без onEvent для fullscreen — кнопка всё равно работает */ }
+  } catch { /* старый SDK */ }
+  document.addEventListener("fullscreenchange", _updateFsButton);
+  document.addEventListener("webkitfullscreenchange", _updateFsButton);
 }
 
 // initData читаем КАЖДЫЙ раз, а не один раз при загрузке: некоторые
