@@ -12,8 +12,9 @@
 import logging
 
 from telegram import (
-    KeyboardButton,
-    ReplyKeyboardMarkup,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    MenuButtonWebApp,
     Update,
     WebAppInfo,
 )
@@ -50,25 +51,49 @@ logger = logging.getLogger(__name__)
 
 # --- Хендлеры ---
 
-def _miniapp_keyboard() -> ReplyKeyboardMarkup:
-    """Persistent ReplyKeyboard с одной кнопкой «📋 Открыть список задач».
-    Кнопка `web_app=...` открывает Mini App в Telegram WebView.
+def _miniapp_inline_keyboard() -> InlineKeyboardMarkup:
     """
-    btn = KeyboardButton(
+    Phase 11.3b: InlineKeyboardButton с `web_app=...` — единственный
+    надёжный способ запустить Mini App из чата с передачей `initData`.
+
+    ReplyKeyboard-кнопка (предыдущая попытка) на Telegram Desktop
+    открывает Mini App без подписи (`initData=""`), отсюда 401.
+    Inline-кнопка работает идентично «верхней» menu-button.
+    """
+    btn = InlineKeyboardButton(
         text="📋 Открыть список задач",
         web_app=WebAppInfo(url=MINI_APP_URL),
     )
-    return ReplyKeyboardMarkup(
-        [[btn]], resize_keyboard=True, is_persistent=True
-    )
+    return InlineKeyboardMarkup([[btn]])
 
 
 _WELCOME_TEXT = (
     "Привет! Я бот-напоминалка.\n\n"
     "Все задачи, списки и заметки — в Mini App. Нажми кнопку "
-    "«📋 Открыть список задач» внизу или /start, чтобы запустить его.\n\n"
+    "ниже или 📋 «Открыть» вверху чата, чтобы его запустить.\n\n"
     "Напоминания о задачах я буду присылать сюда автоматически."
 )
+
+
+async def _ensure_chat_menu_button(context: ContextTypes.DEFAULT_TYPE,
+                                    chat_id: int) -> None:
+    """
+    Phase 11.3b: программно задаём верхнюю кнопку «Открыть» (chat menu
+    button) → MINI_APP_URL. Это та кнопка, которая видна слева от поля
+    ввода. Она запускается без диалога и всегда передаёт initData.
+    Если уже установлена — `setChatMenuButton` всё равно идемпотентна.
+    """
+    try:
+        await context.bot.set_chat_menu_button(
+            chat_id=chat_id,
+            menu_button=MenuButtonWebApp(
+                text="📋 Открыть",
+                web_app=WebAppInfo(url=MINI_APP_URL),
+            ),
+        )
+    except Exception as e:    # не валим /start, если TG API ругнулся
+        logger.warning("set_chat_menu_button failed for chat=%s: %s",
+                       chat_id, e)
 
 
 def _user_allowed(update: Update) -> bool:
@@ -94,8 +119,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         await update.effective_message.reply_text(_DENIED_TEXT)
         return
+    chat_id = update.effective_chat.id if update.effective_chat else None
+    if chat_id is not None:
+        await _ensure_chat_menu_button(context, chat_id)
     await update.effective_message.reply_text(
-        _WELCOME_TEXT, reply_markup=_miniapp_keyboard()
+        _WELCOME_TEXT, reply_markup=_miniapp_inline_keyboard()
     )
 
 
@@ -118,8 +146,8 @@ async def fallback_text(
         return
     await msg.reply_text(
         "Команды бота больше не нужны — всё в Mini App.\n"
-        "Нажми «📋 Открыть список задач» внизу.",
-        reply_markup=_miniapp_keyboard(),
+        "Нажми кнопку ниже или 📋 «Открыть» вверху чата.",
+        reply_markup=_miniapp_inline_keyboard(),
     )
 
 
