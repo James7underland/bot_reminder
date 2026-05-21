@@ -34,6 +34,26 @@
      (часто из-за iframe permissions policy в Telegram WebApp). */
   body.pseudo-fs{position:fixed;inset:0;width:100vw;height:100vh;
     z-index:9999;overflow-y:auto;background:var(--bg)}
+  /* Phase 11.16: empty-states для пустых видов. Большая иконка,
+     заголовок, подсказка — приятнее, чем «Пока нет задач» серым. */
+  .empty-state{display:flex;flex-direction:column;align-items:center;
+    justify-content:center;text-align:center;padding:40px 24px;
+    color:var(--hint);gap:10px;min-height:50vh}
+  .empty-state .empty-icon{font-size:64px;line-height:1;
+    filter:grayscale(.3);opacity:.85}
+  .empty-state .empty-title{font-size:18px;font-weight:600;
+    color:var(--text)}
+  .empty-state .empty-hint{font-size:14px;line-height:1.45;
+    max-width:340px;color:var(--hint)}
+  /* Phase 11.16: анимация при выполнении задачи — короткий fade-out,
+     перед тем как load() её уберёт из активного списка. */
+  @keyframes task-complete{
+    0%{opacity:1;transform:translateX(0)}
+    60%{opacity:.5;transform:translateX(8px)}
+    100%{opacity:0;transform:translateX(40px)}
+  }
+  li.completing{animation:task-complete .35s ease-in forwards;
+    pointer-events:none}
 
   /* Сайдбар-drawer */
   .drawer{position:fixed;top:0;left:0;bottom:0;width:min(320px,80vw);
@@ -382,7 +402,7 @@
     <button id="bulkMove" title="В список…">📁</button>
   </div>
   <ul id="list"></ul>
-  <div id="empty" class="muted" hidden>Пока нет задач</div>
+  <div id="empty" class="empty-state" hidden></div>
 </section>
 
 <!-- Phase 11.2: раздел заметок -->
@@ -393,9 +413,7 @@
     <button id="newNoteBtn">+ Заметка</button>
   </div>
   <ul id="notesList" class="notes-grid"></ul>
-  <div id="notesEmpty" class="muted" hidden>
-    Заметок ещё нет. Нажмите «+ Заметка», чтобы создать первую.
-  </div>
+  <div id="notesEmpty" class="empty-state" hidden></div>
 </section>
 
 <script>
@@ -894,6 +912,38 @@ async function loadLists(){
 function esc(s){ return String(s).replace(/[&<>"]/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 
+// Phase 11.16: тонко-настроенные empty-state'ы для каждого вида.
+// Большая эмодзи-иллюстрация + заголовок + подсказка, что делать.
+function _emptyHtmlForTasks(searchQuery, view) {
+  if (searchQuery) {
+    return _emptyTemplate("🔎", "Ничего не найдено",
+      `По запросу «${esc(searchQuery)}» задач нет. Попробуйте другие слова.`);
+  }
+  switch (view) {
+    case "myday":
+      return _emptyTemplate("☀️", "Сегодня свободно",
+        "Добавьте задачу с сегодняшним сроком, или закрепите существующую в «Мой день» из её панели.");
+    case "planned":
+      return _emptyTemplate("📅", "Нет планов",
+        "Здесь будут задачи со сроком или напоминанием. Установите дату — задача попадёт сюда автоматически.");
+    case "important":
+      return _emptyTemplate("⭐", "Нет важных",
+        "Нажмите ★ рядом с задачей, чтобы пометить её важной — она появится в этом виде.");
+    case "archive":
+      return _emptyTemplate("🗂", "Архив пуст",
+        "Выполненные задачи появятся здесь. Чтобы вернуть, откройте задачу и снимите галочку.");
+    default:
+      return _emptyTemplate("✨", "Пока нет задач",
+        "Добавьте первую задачу в поле выше — или потяните ≡ влево, чтобы выбрать список.");
+  }
+}
+
+function _emptyTemplate(icon, title, hint) {
+  return `<div class="empty-icon">${icon}</div>
+          <div class="empty-title">${esc(title)}</div>
+          <div class="empty-hint">${esc(hint)}</div>`;
+}
+
 async function load(){
   let tasks;
   const sq = $("#search").value.trim();
@@ -916,7 +966,13 @@ async function load(){
     tasks = await api("/tasks" + q);
   }
   const ul = $("#list"); ul.innerHTML = "";
-  $("#empty").hidden = tasks.length > 0;
+  const emptyEl = $("#empty");
+  if (tasks.length === 0) {
+    emptyEl.hidden = false;
+    emptyEl.innerHTML = _emptyHtmlForTasks(sq, view);
+  } else {
+    emptyEl.hidden = true;
+  }
   for (const t of tasks) ul.appendChild(row(t));
   // Drag-and-drop включаем только в режимах, где порядок реально
   // соответствует order_index — это «Все» (без поиска) и «по списку».
@@ -1370,8 +1426,23 @@ function row(t){
     const act = e.target.dataset.act;
     if (!act) return;
     if (act === "toggle") {
-      await api(`/tasks/${t.id}/${t.completed?'uncomplete':'complete'}`,
-                {method:"POST"});
+      // Phase 11.16: при «выполнить» — короткая анимация перед load().
+      // При «вернуть в активные» — без анимации (визуально она тут вредна).
+      const completing = !t.completed;
+      if (completing) li.classList.add("completing");
+      const apiCall = api(
+        `/tasks/${t.id}/${t.completed ? 'uncomplete' : 'complete'}`,
+        {method: "POST"},
+      );
+      if (completing) {
+        // Параллельно: ждём 350 мс анимации И HTTP-ответ.
+        await Promise.all([
+          apiCall,
+          new Promise(r => setTimeout(r, 350)),
+        ]);
+      } else {
+        await apiCall;
+      }
       load();
     } else if (act === "star") {
       await api(`/tasks/${t.id}`, {method:"PATCH",
@@ -1829,7 +1900,17 @@ async function loadNotes() {
   const notes = await api(url);
   const ul = $("#notesList");
   ul.innerHTML = "";
-  $("#notesEmpty").hidden = notes.length > 0;
+  const emptyEl = $("#notesEmpty");
+  if (notes.length === 0) {
+    emptyEl.hidden = false;
+    emptyEl.innerHTML = q
+      ? _emptyTemplate("🔎", "Ничего не найдено",
+          `По запросу «${esc(q)}» заметок нет.`)
+      : _emptyTemplate("📓", "Заметок пока нет",
+          "Нажмите «+ Заметка», чтобы создать первую. В теле поддерживается markdown.");
+  } else {
+    emptyEl.hidden = true;
+  }
   for (const n of notes) ul.appendChild(noteCard(n));
   refreshStats();
 }
