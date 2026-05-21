@@ -23,11 +23,70 @@
      иначе виден столбик 760px по центру и пустые поля). Содержимое
      центрируем через flex/grid, если потребуется на очень широких
      экранах. */
-  .fs-btn{font-size:16px;padding:4px 8px;line-height:1}
+  /* Phase 11.14: icon-buttons в шапке (≡ ⋯ ⛶) и drawer-навигация. */
+  .icon-btn{background:transparent;border:none;color:var(--link);
+    font-size:20px;line-height:1;padding:6px 10px;cursor:pointer;
+    border-radius:8px;transition:background .15s}
+  .icon-btn:hover{background:rgba(127,127,127,.12)}
   body.is-mobile .fs-btn{display:none}
-  header{padding:14px 16px 6px;font-size:22px;font-weight:700;
-    display:flex;align-items:center;gap:12px}
-  header h1{flex:1;margin:0;font-size:inherit;font-weight:inherit}
+
+  /* Сайдбар-drawer */
+  .drawer{position:fixed;top:0;left:0;bottom:0;width:min(320px,80vw);
+    background:var(--bg);color:var(--text);
+    border-right:1px solid rgba(127,127,127,.18);
+    transform:translateX(-100%);transition:transform .22s ease-out;
+    z-index:200;overflow-y:auto;padding:8px 0;
+    box-shadow:4px 0 16px rgba(0,0,0,.18)}
+  .drawer.open{transform:translateX(0)}
+  .drawer-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.45);
+    z-index:190;opacity:0;transition:opacity .2s;pointer-events:none}
+  .drawer-backdrop.open{opacity:1;pointer-events:auto}
+  .drawer-header{display:flex;align-items:center;justify-content:space-between;
+    padding:6px 12px 10px;border-bottom:1px solid rgba(127,127,127,.15)}
+  .drawer-title{font-weight:600;font-size:16px}
+  .drawer-section{padding:6px 0;border-bottom:1px solid rgba(127,127,127,.12)}
+  .drawer-section:last-child{border-bottom:none}
+  .drawer-label{font-size:11px;color:var(--hint);text-transform:uppercase;
+    letter-spacing:.5px;padding:6px 16px;display:flex;align-items:center;
+    justify-content:space-between;gap:8px}
+  .drawer-item{display:flex;align-items:center;gap:10px;
+    background:transparent;border:none;color:var(--text);
+    padding:10px 16px;width:100%;text-align:left;cursor:pointer;
+    font-size:14px;border-radius:0;transition:background .12s}
+  .drawer-item:hover{background:rgba(127,127,127,.12)}
+  .drawer-item.active{background:rgba(56,134,206,.18);color:var(--btn);
+    font-weight:600}
+  .drawer-item .list-dot{display:inline-block;width:10px;height:10px;
+    border-radius:50%;flex:none}
+  .drawer-item .list-actions{margin-left:auto;display:none;gap:4px}
+  .drawer-item:hover .list-actions{display:inline-flex}
+  .drawer-item .list-actions button{background:none;border:none;
+    color:var(--hint);font-size:14px;cursor:pointer;padding:2px 4px}
+  .drawer-item .list-actions button:hover{color:var(--text)}
+
+  /* Overflow-меню ⋯ */
+  .popmenu{position:fixed;top:54px;right:8px;background:var(--bg);
+    border:1px solid rgba(127,127,127,.2);border-radius:10px;
+    box-shadow:0 8px 24px rgba(0,0,0,.18);padding:4px 0;z-index:150;
+    min-width:200px}
+  .popmenu-item{display:block;width:100%;text-align:left;
+    background:transparent;border:none;padding:10px 14px;color:var(--text);
+    cursor:pointer;font-size:14px}
+  .popmenu-item:hover{background:rgba(127,127,127,.12)}
+
+  /* Compact inline-bar для поиска/сортировки/showDone */
+  .bar-inline{align-items:center}
+  .compact-sel{flex:none;width:auto;min-width:60px;padding:9px 8px}
+  .inline-toggle{flex:none;display:inline-flex;align-items:center;gap:4px;
+    color:var(--hint);font-size:13px;cursor:pointer;padding:6px 8px;
+    border-radius:8px;transition:background .15s}
+  .inline-toggle:hover{background:rgba(127,127,127,.1)}
+  .inline-toggle input{margin-right:2px}
+  header{padding:10px 8px 6px;font-size:20px;font-weight:700;
+    display:flex;align-items:center;gap:4px;
+    border-bottom:1px solid rgba(127,127,127,.12)}
+  header h1{flex:1;margin:0;font-size:inherit;font-weight:inherit;
+    padding-left:4px}
   .stats-badge{font-size:13px;font-weight:500;color:var(--hint);
     background:var(--card);padding:6px 12px;border-radius:14px;
     cursor:pointer;user-select:none;white-space:nowrap;
@@ -225,57 +284,88 @@
 </head>
 <body>
 <header>
+  <button id="navBtn" class="icon-btn" title="Меню">≡</button>
   <h1 id="appTitle">Мои задачи</h1>
   <div id="statsBadge" class="stats-badge" hidden title="Статистика">…</div>
-  <!-- Phase 11.8: кнопка появляется только на десктопе (через JS). -->
-  <button id="fsBtn" class="ghost fs-btn" hidden title="На весь экран">⛶</button>
+  <button id="fsBtn" class="icon-btn" hidden title="На весь экран">⛶</button>
+  <button id="moreBtn" class="icon-btn" title="Ещё">⋯</button>
 </header>
 
-<!-- Phase 11.2: переключатель разделов «Задачи / Заметки» -->
-<div class="bar tabs">
-  <button id="tabTasks" class="tab active" data-section="tasks">📋 Задачи</button>
-  <button id="tabNotes" class="tab" data-section="notes">📓 Заметки</button>
-</div>
+<!-- Phase 11.14: боковая панель навигации (drawer). По клику ≡
+     открывается слева; видны разделы, виды, списки. -->
+<aside id="navDrawer" class="drawer" hidden>
+  <div class="drawer-header">
+    <span class="drawer-title">Навигация</span>
+    <button id="drawerClose" class="icon-btn" title="Закрыть">✕</button>
+  </div>
+  <div class="drawer-section">
+    <div class="drawer-label">Разделы</div>
+    <button class="drawer-item" data-go="tasks">📋 Задачи</button>
+    <button class="drawer-item" data-go="notes">📓 Заметки</button>
+  </div>
+  <div class="drawer-section nav-views">
+    <div class="drawer-label">Виды задач</div>
+    <button class="drawer-item drawer-view" data-view="all">🏠 Все задачи</button>
+    <button class="drawer-item drawer-view" data-view="myday">🗓 Мой день</button>
+    <button class="drawer-item drawer-view" data-view="planned">📅 Планируется</button>
+    <button class="drawer-item drawer-view" data-view="important">⭐ Важно</button>
+    <button class="drawer-item drawer-view" data-view="archive">🗂 Архив</button>
+  </div>
+  <div class="drawer-section nav-lists">
+    <div class="drawer-label">
+      Списки
+      <button id="drawerNewList" class="icon-btn" title="Создать список">+</button>
+    </div>
+    <div id="drawerListItems"></div>
+  </div>
+</aside>
+<div id="navBackdrop" class="drawer-backdrop" hidden></div>
 
-<!-- Раздел задач (как раньше) -->
+<!-- Overflow-меню ⋯ — редкие действия (часовой пояс, экспорт, импорт). -->
+<div id="moreMenu" class="popmenu" hidden>
+  <button class="popmenu-item" data-action="tz">⚙ Часовой пояс</button>
+  <button class="popmenu-item" data-action="export">📦 Экспорт JSON</button>
+  <button class="popmenu-item" data-action="import">↩ Импорт JSON</button>
+</div>
+<input id="impFile" type="file" accept="application/json" hidden>
+
+<!-- Раздел задач -->
 <section id="tasksSection">
   <div class="bar">
-    <select id="listSel"></select>
-    <button id="newList" class="ghost" title="Создать список">+</button>
-    <button id="renList" class="ghost" title="Переименовать">✎</button>
-    <button id="clrList" class="ghost" title="Цвет">🎨</button>
-    <button id="delList" class="ghost" title="Удалить">🗑</button>
-    <button id="tzBtn" class="ghost" title="Часовой пояс">⚙</button>
-    <button id="expBtn" class="ghost" title="Экспорт">📦</button>
-    <button id="impBtn" class="ghost" title="Импорт">↩</button>
-    <input id="impFile" type="file" accept="application/json" hidden>
-  </div>
-  <div class="bar">
-    <input id="newTask" placeholder="Новая задача…" autocomplete="off">
+    <input id="newTask" placeholder="+ Новая задача…" autocomplete="off">
     <button id="addBtn">Добавить</button>
   </div>
-  <div class="bar">
+  <div class="bar bar-inline">
     <input id="search" placeholder="🔎 Поиск…" autocomplete="off">
-    <select id="sortSel">
-      <option value="">сортировка</option>
-      <option value="important">важные</option>
-      <option value="due">по сроку</option>
-      <option value="alpha">алфавит</option>
-      <option value="created">по дате</option>
+    <select id="sortSel" class="compact-sel">
+      <option value="">↕</option>
+      <option value="important">★</option>
+      <option value="due">📅</option>
+      <option value="alpha">A→Z</option>
+      <option value="created">⏱</option>
     </select>
-  </div>
-  <div class="bar">
-    <select id="viewSel">
-      <option value="all">Все задачи</option>
-      <option value="myday">🗓 Мой день</option>
-      <option value="planned">📅 Планируется</option>
-      <option value="important">⭐ Важно</option>
-      <option value="archive">🗂 Архив</option>
-    </select>
-    <label style="color:var(--hint);font-size:13px">
-      <input type="checkbox" id="showDone"> с выполненными
+    <label class="inline-toggle" title="Показывать выполненные">
+      <input type="checkbox" id="showDone"> ✓
     </label>
   </div>
+  <!-- Скрытые «совместимые» элементы — drawer и overflow-меню работают
+       поверх существующих обработчиков listSel/viewSel/newList/.../tzBtn.
+       Минимум переделок логики, максимум UI-полировки. -->
+  <select id="listSel" hidden></select>
+  <select id="viewSel" hidden>
+    <option value="all">Все задачи</option>
+    <option value="myday">🗓 Мой день</option>
+    <option value="planned">📅 Планируется</option>
+    <option value="important">⭐ Важно</option>
+    <option value="archive">🗂 Архив</option>
+  </select>
+  <button id="newList" hidden></button>
+  <button id="renList" hidden></button>
+  <button id="clrList" hidden></button>
+  <button id="delList" hidden></button>
+  <button id="tzBtn" hidden></button>
+  <button id="expBtn" hidden></button>
+  <button id="impBtn" hidden></button>
   <!-- Phase 11.4: панель действий для multi-select. Появляется
        над списком, когда selectMode=true. -->
   <div id="bulkBar" class="bulk-bar" hidden>
@@ -719,6 +809,10 @@ async function loadLists(){
       return `<option value="${l.id}" style="color:${c}">● ${esc(l.name)}</option>`;
     }).join("");
   sel.value = listId;
+  // Phase 11.14: synchronize the sidebar drawer.
+  if (typeof renderDrawerLists === "function") {
+    try { renderDrawerLists(); } catch {}
+  }
 }
 
 function esc(s){ return String(s).replace(/[&<>"]/g,
@@ -1510,15 +1604,142 @@ function switchSection(sec) {
   saveUI({section: sec});
   $("#tasksSection").hidden = sec !== "tasks";
   $("#notesSection").hidden = sec !== "notes";
-  $("#tabTasks").classList.toggle("active", sec === "tasks");
-  $("#tabNotes").classList.toggle("active", sec === "notes");
   $("#appTitle").textContent = sec === "tasks" ? "Мои задачи" : "Мои заметки";
+  // Phase 11.14: подсветка активного раздела в drawer'е.
+  document.querySelectorAll('.drawer-item[data-go]').forEach(el =>
+    el.classList.toggle("active", el.dataset.go === sec));
   if (sec === "notes") loadNotes();
   else load();
 }
 
-$("#tabTasks").onclick = () => switchSection("tasks");
-$("#tabNotes").onclick = () => switchSection("notes");
+// Phase 11.14: drawer-навигация. Кнопка ≡ открывает; backdrop и ✕ закрывают.
+function openDrawer() {
+  $("#navDrawer").hidden = false;
+  $("#navBackdrop").hidden = false;
+  requestAnimationFrame(() => {
+    $("#navDrawer").classList.add("open");
+    $("#navBackdrop").classList.add("open");
+  });
+  renderDrawerLists();
+  syncDrawerActive();
+}
+function closeDrawer() {
+  $("#navDrawer").classList.remove("open");
+  $("#navBackdrop").classList.remove("open");
+  setTimeout(() => {
+    $("#navDrawer").hidden = true;
+    $("#navBackdrop").hidden = true;
+  }, 230);
+}
+$("#navBtn").onclick = openDrawer;
+$("#drawerClose").onclick = closeDrawer;
+$("#navBackdrop").onclick = closeDrawer;
+
+// Клики по разделам в drawer'е → switchSection.
+document.querySelectorAll('.drawer-item[data-go]').forEach(el => {
+  el.onclick = () => { switchSection(el.dataset.go); closeDrawer(); };
+});
+
+// Клики по видам задач в drawer'е → обновить #viewSel + перезагрузить.
+document.querySelectorAll('.drawer-item[data-view]').forEach(el => {
+  el.onclick = () => {
+    $("#viewSel").value = el.dataset.view;
+    saveUI({view: el.dataset.view});
+    syncDrawerActive();
+    if (_section !== "tasks") switchSection("tasks");
+    else load();
+    closeDrawer();
+  };
+});
+
+function syncDrawerActive() {
+  const view = $("#viewSel").value;
+  document.querySelectorAll('.drawer-item[data-view]').forEach(el =>
+    el.classList.toggle("active", el.dataset.view === view));
+  document.querySelectorAll('.drawer-list-item').forEach(el =>
+    el.classList.toggle("active", el.dataset.listId === String(listId)));
+}
+
+// Список «Списков» в drawer'е: цветная точка + название; клик переключает
+// listId. Иконки управления (rename / colour / delete) на hover.
+function renderDrawerLists() {
+  const box = $("#drawerListItems");
+  box.innerHTML = "";
+  // Псевдо-элемент «Без списка» (listId="0")
+  const items = [{id: "all", name: "Все", color: ""},
+                 {id: "0",   name: "Без списка", color: ""}]
+    .concat(LISTS.map(l => ({id: String(l.id), name: l.name, color: l.color})));
+  for (const it of items) {
+    const row = document.createElement("button");
+    row.className = "drawer-item drawer-list-item";
+    row.dataset.listId = it.id;
+    const dotColor = it.color || "var(--hint)";
+    row.innerHTML =
+      `<span class="list-dot" style="background:${dotColor}"></span>`
+      + `<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">`
+      +   esc(it.name)
+      + `</span>`
+      + (/^\d+$/.test(it.id) && it.id !== "0"
+        ? `<span class="list-actions">
+             <button data-list-act="ren" title="Переименовать">✎</button>
+             <button data-list-act="clr" title="Цвет">🎨</button>
+             <button data-list-act="del" title="Удалить">🗑</button>
+           </span>`
+        : "");
+    row.addEventListener("click", (e) => {
+      const act = e.target.dataset.listAct;
+      if (act) {
+        e.stopPropagation();
+        listId = it.id;
+        if (act === "ren") $("#renList").click();
+        else if (act === "clr") $("#clrList").click();
+        else if (act === "del") $("#delList").click();
+        return;
+      }
+      listId = it.id;
+      saveUI({listId: listId});
+      // Сброс view в "all" — без этого list-фильтр поверх смарт-вью не работает.
+      $("#viewSel").value = "all";
+      saveUI({view: "all"});
+      syncDrawerActive();
+      if (_section !== "tasks") switchSection("tasks");
+      else load();
+      closeDrawer();
+    });
+    box.appendChild(row);
+  }
+}
+
+// «+» возле заголовка «Списки» в drawer'е — создаёт новый список через
+// существующий обработчик #newList (показывает uiPrompt).
+$("#drawerNewList").onclick = (e) => {
+  e.stopPropagation();
+  $("#newList").click();
+};
+
+// Overflow ⋯ — открывает popmenu c таймзоной/экспортом/импортом.
+function toggleMoreMenu(show) {
+  const m = $("#moreMenu");
+  m.hidden = show === undefined ? !m.hidden : !show;
+}
+$("#moreBtn").onclick = (e) => {
+  e.stopPropagation();
+  toggleMoreMenu();
+};
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#moreMenu") && !e.target.closest("#moreBtn")) {
+    toggleMoreMenu(false);
+  }
+});
+document.querySelectorAll(".popmenu-item").forEach(el => {
+  el.onclick = () => {
+    toggleMoreMenu(false);
+    const action = el.dataset.action;
+    if (action === "tz") $("#tzBtn").click();
+    else if (action === "export") $("#expBtn").click();
+    else if (action === "import") $("#impBtn").click();
+  };
+});
 
 let _notesSearchT;
 $("#searchNotes").addEventListener("input", () => {
