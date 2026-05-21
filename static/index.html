@@ -42,6 +42,20 @@
      (часто из-за iframe permissions policy в Telegram WebApp). */
   body.pseudo-fs{position:fixed;inset:0;width:100vw;height:100vh;
     z-index:9999;overflow-y:auto;background:var(--bg)}
+  /* Phase 11.18: floating action button (FAB) для добавления задачи /
+     заметки. Правый нижний угол, заметная, но не мешающая. */
+  .fab{position:fixed;right:18px;bottom:18px;width:56px;height:56px;
+    border-radius:50%;background:var(--btn);color:var(--btn-text);
+    border:none;cursor:pointer;
+    box-shadow:0 4px 12px rgba(0,0,0,.25),0 2px 4px rgba(0,0,0,.15);
+    z-index:80;display:inline-flex;align-items:center;justify-content:center;
+    transition:transform .15s, box-shadow .15s, opacity .2s}
+  .fab:hover{transform:scale(1.08);
+    box-shadow:0 6px 18px rgba(0,0,0,.3),0 3px 6px rgba(0,0,0,.18)}
+  .fab:active{transform:scale(.96)}
+  .fab svg{width:26px;height:26px;stroke-width:2.5}
+  body.select-mode .fab,
+  body.fab-hidden .fab{opacity:0;pointer-events:none;transform:scale(.85)}
   /* Phase 11.16: empty-states для пустых видов. Большая иконка,
      заголовок, подсказка — приятнее, чем «Пока нет задач» серым. */
   .empty-state{display:flex;flex-direction:column;align-items:center;
@@ -424,6 +438,9 @@
   <div id="notesEmpty" class="empty-state" hidden></div>
 </section>
 
+<!-- Phase 11.18: плавающая кнопка «+» в правом нижнем углу. -->
+<button id="fab" class="fab" title="Добавить" data-icon="plus"></button>
+
 <script>
 // Phase 11.17: SVG-иконки в кнопках (заменяют эмодзи в местах, где
 // они выглядели «эмодзи-лень»). Lucide-стиль: stroke-based, 24px,
@@ -466,7 +483,28 @@ function applyIcons(root) {
 }
 // Применяем сразу для статических элементов в шапке/drawer'е, а
 // динамические (row, noteCard) подключатся в своих рендерах.
-window.addEventListener("DOMContentLoaded", () => applyIcons());
+window.addEventListener("DOMContentLoaded", () => {
+  applyIcons();
+  // Phase 11.18: FAB-кнопка справа-внизу: в режиме задач → focus на
+  // input «+ Новая задача» (или scroll к нему, потом focus). В заметках
+  // → открыть редактор. Действие зависит от текущего раздела.
+  const fab = document.getElementById("fab");
+  if (fab) {
+    fab.addEventListener("click", () => {
+      if (_section === "notes") {
+        // Если уже инициализирован обработчик newNoteBtn — дёргаем его.
+        const nb = document.getElementById("newNoteBtn");
+        if (nb) nb.click();
+      } else {
+        const inp = document.getElementById("newTask");
+        if (inp) {
+          inp.scrollIntoView({behavior: "smooth", block: "center"});
+          setTimeout(() => inp.focus(), 200);
+        }
+      }
+    });
+  }
+});
 
 const tg = window.Telegram ? window.Telegram.WebApp : null;
 
