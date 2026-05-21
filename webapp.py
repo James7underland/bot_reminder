@@ -27,6 +27,7 @@ from database import (
     add_task,
     add_to_myday,
     assign_task_to_list,
+    bulk_update_tasks,
     complete_task,
     create_list,
     db_ping,
@@ -259,6 +260,13 @@ class Snooze(BaseModel):
 
 class Reorder(BaseModel):
     after: int | None = None
+
+
+# Phase 11.4: bulk actions on tasks.
+class Bulk(BaseModel):
+    ids: list[int]
+    action: str
+    list_id: int | None = None
 
 
 # --- Phase 11.2: Notes ---
@@ -562,6 +570,26 @@ async def api_reorder(
     if not moved:
         raise HTTPException(status_code=409, detail="reorder rejected")
     return {"moved": True}
+
+
+@app.post("/api/tasks/bulk")
+async def api_bulk_tasks(
+    body: Bulk, user_id: int = Depends(current_user_id),
+) -> dict:
+    """
+    Phase 11.4: пакетное действие над выбранными задачами.
+    `ids` — список id (фильтруется по `user_id`, чужие игнорируются).
+    `action` — complete | uncomplete | star | unstar | move.
+    Для `move`: `list_id` (None или id своего активного списка).
+    422 на неизвестный action / битый list_id.
+    """
+    try:
+        affected = bulk_update_tasks(
+            user_id, body.ids, body.action, list_id=body.list_id
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+    return {"affected": affected}
 
 
 @app.get("/api/lists")

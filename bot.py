@@ -145,7 +145,6 @@ async def fallback_text(
         await msg.reply_text(_DENIED_TEXT)
         return
     await msg.reply_text(
-        "Команды бота больше не нужны — всё в Mini App.\n"
         "Нажми кнопку ниже или 📋 «Открыть» вверху чата.",
         reply_markup=_miniapp_inline_keyboard(),
     )

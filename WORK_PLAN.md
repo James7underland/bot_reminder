@@ -593,6 +593,27 @@ Mini App» + «Нужно добавить раздел с заметками (�
   вырезаны handler-тесты — DB-слой остаётся, пользовательские сценарии
   живут в `test_webapp.py`. Планировщик (рассылка напоминаний и
   purge soft-deleted) сохранён. 196 тестов, TOTAL 99.30%.
+- **11.4 ✅ (PR #47):** Bulk-actions для задач. БД: `bulk_update_tasks
+  (user_id, ids, action, list_id=None)` — фильтрует id по user_id
+  (защита от чужих), `_BULK_ACTIONS` = `complete|uncomplete|star|
+  unstar|move`. Для `complete` каждый элемент идёт через
+  `complete_task` (нужна рекуррентность). Остальные — одним UPDATE
+  в транзакции. `move` валидирует, что список свой и активный
+  (ValueError). API: `POST /api/tasks/bulk {ids[], action,
+  list_id?}` → `{affected}` (422 на битый action или чужой list_id).
+  Frontend: long-press 500мс на тексте задачи → режим мульти-выбора
+  (тач+мышь, через Pointer Events; haptic feedback на мобильном).
+  Топ-бар с действиями ✓ / ★ / ☆ / 📁 / ✕. Drag-handle и стрелки
+  скрыты в режиме выбора. `📁` использует `uiSelect` для выбора
+  списка. Также убран лишний префикс «Команды бота больше не нужны»
+  в fallback-сообщении бота (по запросу пользователя). 230 тестов.
+- **11.3b ✅ (PR #46):** Hotfix аутентификации Mini App. Bug-report
+  пользователя со скрином: «platform: tdesktop · initData length: 0».
+  Корень — `KeyboardButton` в `ReplyKeyboardMarkup` НЕ передаёт
+  initData на десктопе (там семантика «send data back», а не auth).
+  Замена на `InlineKeyboardButton + InlineKeyboardMarkup` в
+  приветствии + `bot.set_chat_menu_button(MenuButtonWebApp)` для
+  верхней «Открыть». 222 теста.
 - **11.3 ✅ (PR #45):** Single-user whitelist + диагностика 401 +
   smart-fullscreen. (a) Конфиг `ALLOWED_USER_IDS` / `ALLOWED_USERNAMES`
   (CSV); пустые = доступ всем. `is_user_allowed(user_id, username)`

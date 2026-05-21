@@ -83,8 +83,13 @@ async def test_fallback_text_redirects_to_miniapp():
     u = _mk_update(text="что-то странное")
     await bot.fallback_text(u, MagicMock())
     u.effective_message.reply_text.assert_awaited_once()
-    text = u.effective_message.reply_text.call_args.args[0]
-    assert "Mini App" in text
+    args, kwargs = u.effective_message.reply_text.call_args
+    text = args[0]
+    # Phase 11.4: краткий текст с указанием кнопок (без фразы про Mini App).
+    assert "кнопку ниже" in text and "Открыть" in text
+    # InlineKeyboardMarkup с WebApp-кнопкой обязателен.
+    kb = kwargs["reply_markup"]
+    assert kb.inline_keyboard[0][0].web_app is not None
 
 
 async def test_fallback_text_ignores_webapp_data():

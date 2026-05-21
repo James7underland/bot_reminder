@@ -2005,3 +2005,133 @@ def test_scheduler_notify_skips_disallowed_users(monkeypatch):
     assert n == 1
     fake_bot.send_message.assert_awaited_once()
     assert marked == [1, 2]
+
+
+# --- Phase 11.4: bulk actions ---
+
+def test_db_bulk_complete():
+    from database import (
+        add_task,
+        bulk_update_tasks,
+        get_tasks,
+    )
+    a = add_task(1000, "a")
+    b = add_task(1000, "b")
+    c = add_task(1000, "c")
+    n = bulk_update_tasks(1000, [a, b], "complete")
+    assert n == 2
+    # c всё ещё активна
+    assert [t["id"] for t in get_tasks(1000)] == [c]
+    assert {t["id"] for t in get_tasks(1000, completed=True)} == {a, b}
+
+
+def test_db_bulk_filters_foreign_ids():
+    """Чужие/несуществующие id игнорируются — нельзя через bulk дёрнуть чужое."""
+    from database import add_task, bulk_update_tasks, get_tasks
+    mine = add_task(1001, "mine")
+    other = add_task(1002, "other")
+    n = bulk_update_tasks(1001, [mine, other, 999999], "complete")
+    assert n == 1     # только своя
+    assert get_tasks(1002)[0]["id"] == other  # чужая не тронута
+
+
+def test_db_bulk_star_unstar_uncomplete():
+    from database import (
+        add_task,
+        bulk_update_tasks,
+        complete_task,
+        get_tasks,
+        set_important,
+    )
+    a = add_task(1003, "a")
+    b = add_task(1003, "b")
+    set_important(a, True)
+    # unstar
+    assert bulk_update_tasks(1003, [a, b], "unstar") == 2
+    assert all(t["important"] is False for t in get_tasks(1003))
+    # star обратно
+    assert bulk_update_tasks(1003, [a, b], "star") == 2
+    assert all(t["important"] is True for t in get_tasks(1003))
+    # uncomplete после complete
+    complete_task(a)
+    assert bulk_update_tasks(1003, [a], "uncomplete") == 1
+    assert {t["id"] for t in get_tasks(1003)} == {a, b}
+
+
+def test_db_bulk_move_to_list():
+    from database import (
+        add_task,
+        bulk_update_tasks,
+        create_list,
+        get_tasks_by_list,
+    )
+    lid = create_list(1004, "L")
+    a = add_task(1004, "a")
+    b = add_task(1004, "b")
+    add_task(1004, "c")
+    assert bulk_update_tasks(1004, [a, b], "move", list_id=lid) == 2
+    assert {t["id"] for t in get_tasks_by_list(1004, lid)} == {a, b}
+    # move в None = «без списка»
+    assert bulk_update_tasks(1004, [a], "move", list_id=None) == 1
+    assert {t["id"] for t in get_tasks_by_list(1004, None)} >= {a}
+
+
+def test_db_bulk_move_rejects_foreign_or_deleted_list():
+    import pytest
+
+    from database import (
+        add_task,
+        bulk_update_tasks,
+        create_list,
+        delete_list,
+    )
+    a = add_task(1005, "a")
+    foreign = create_list(1006, "L")  # чужой
+    with pytest.raises(ValueError):
+        bulk_update_tasks(1005, [a], "move", list_id=foreign)
+    own = create_list(1005, "Mine")
+    delete_list(own)
+    with pytest.raises(ValueError):
+        bulk_update_tasks(1005, [a], "move", list_id=own)
+
+
+def test_db_bulk_unknown_action_raises():
+    import pytest
+
+    from database import bulk_update_tasks
+    with pytest.raises(ValueError):
+        bulk_update_tasks(1007, [1], "delete")   # не поддерживаем delete
+    with pytest.raises(ValueError):
+        bulk_update_tasks(1007, [1], "")
+
+
+def test_db_bulk_empty_and_garbage_ids():
+    from database import bulk_update_tasks
+    assert bulk_update_tasks(1008, [], "complete") == 0
+    # str, отрицательные, дубликаты — отфильтровываются
+    assert bulk_update_tasks(1008, [-1, 0, "abc"], "complete") == 0  # type: ignore
+
+
+def test_api_bulk_endpoint(client):
+    a = client.post("/api/tasks", json={"description": "a"},
+                    headers=hdr()).json()["id"]
+    b = client.post("/api/tasks", json={"description": "b"},
+                    headers=hdr()).json()["id"]
+    # Звёздочка двумя задачам пакетом
+    r = client.post(
+        "/api/tasks/bulk",
+        json={"ids": [a, b], "action": "star"}, headers=hdr(),
+    )
+    assert r.status_code == 200 and r.json()["affected"] == 2
+    # Чужие id игнорируются (не 404 — это ожидаемая семантика)
+    r2 = client.post(
+        "/api/tasks/bulk",
+        json={"ids": [a, b], "action": "complete"}, headers=hdr(99),
+    )
+    assert r2.status_code == 200 and r2.json()["affected"] == 0
+    # Битый action → 422
+    bad = client.post(
+        "/api/tasks/bulk",
+        json={"ids": [a], "action": "drop_table"}, headers=hdr(),
+    )
+    assert bad.status_code == 422
