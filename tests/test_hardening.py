@@ -35,15 +35,41 @@ def _mk_update(text=None, web_app_data=None):
 
 
 async def test_start_replies_with_webapp_button():
+    # Phase 11.3b: ReplyKeyboard заменён на InlineKeyboard (передаёт
+    # initData на tdesktop, в отличие от ReplyKeyboard).
     u = _mk_update()
-    await bot.start(u, MagicMock())
+    u.effective_chat = MagicMock()
+    u.effective_chat.id = 12345
+    ctx = MagicMock()
+    ctx.bot = MagicMock()
+    ctx.bot.set_chat_menu_button = AsyncMock()
+    await bot.start(u, ctx)
     u.effective_message.reply_text.assert_awaited_once()
     args, kwargs = u.effective_message.reply_text.call_args
     assert "Mini App" in args[0]
-    # reply_markup должен содержать ReplyKeyboard с WebApp-кнопкой.
+    # reply_markup — InlineKeyboardMarkup с WebApp-кнопкой.
     kb = kwargs["reply_markup"]
-    btn = kb.keyboard[0][0]
+    btn = kb.inline_keyboard[0][0]
     assert btn.web_app is not None and btn.web_app.url.startswith("https://")
+    # chat menu button установлен программно.
+    ctx.bot.set_chat_menu_button.assert_awaited_once()
+
+
+async def test_start_survives_set_chat_menu_button_failure(caplog):
+    """`set_chat_menu_button` иногда падает (например, бот без админ-прав
+    в группе); /start всё равно отвечает приветствием."""
+    import logging
+    u = _mk_update()
+    u.effective_chat = MagicMock()
+    u.effective_chat.id = 1
+    ctx = MagicMock()
+    ctx.bot = MagicMock()
+    ctx.bot.set_chat_menu_button = AsyncMock(
+        side_effect=RuntimeError("simulated"))
+    with caplog.at_level(logging.WARNING):
+        await bot.start(u, ctx)
+    u.effective_message.reply_text.assert_awaited_once()
+    assert any("set_chat_menu_button failed" in m for m in caplog.messages)
 
 
 async def test_start_no_message_is_noop():
@@ -97,7 +123,12 @@ async def test_start_allows_user_in_allowlist(monkeypatch):
     u.effective_user = MagicMock()
     u.effective_user.id = 42
     u.effective_user.username = "e_rnst"
-    await bot.start(u, MagicMock())
+    u.effective_chat = MagicMock()
+    u.effective_chat.id = 42
+    ctx = MagicMock()
+    ctx.bot = MagicMock()
+    ctx.bot.set_chat_menu_button = AsyncMock()
+    await bot.start(u, ctx)
     # Получил приветствие с WebApp-кнопкой
     args, kwargs = u.effective_message.reply_text.call_args
     assert "Mini App" in args[0]
