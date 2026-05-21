@@ -89,12 +89,27 @@ def validate_init_data(init_data: str, bot_token: str) -> dict | None:
     Возвращает dict пользователя (с `id`) при валидной подписи, иначе
     None. Алгоритм — по докам Telegram: secret = HMAC_SHA256("WebAppData",
     token); hash = HMAC_SHA256(secret, data_check_string).
+
+    Phase 11.3: при отказе пишем точечный WARNING с причиной — без
+    leak'а самих данных. Помогает понять, почему 401 (пусто, нет токена,
+    битый hash, нет user, кривой JSON).
     """
-    if not init_data or not bot_token:
+    if not init_data:
+        logger.warning("validate_init_data: empty initData")
+        return None
+    if not bot_token:
+        logger.warning(
+            "validate_init_data: TELEGRAM_BOT_TOKEN empty — "
+            "сервер запущен без токена (.env не загружен?)"
+        )
         return None
     pairs = dict(parse_qsl(init_data, keep_blank_values=True))
     received_hash = pairs.pop("hash", None)
-    if not received_hash or "user" not in pairs:
+    if not received_hash:
+        logger.warning("validate_init_data: no hash in initData")
+        return None
+    if "user" not in pairs:
+        logger.warning("validate_init_data: no user in initData")
         return None
     data_check_string = "\n".join(
         f"{k}={pairs[k]}" for k in sorted(pairs)
@@ -106,22 +121,41 @@ def validate_init_data(init_data: str, bot_token: str) -> dict | None:
         secret_key, data_check_string.encode(), hashlib.sha256
     ).hexdigest()
     if not hmac.compare_digest(calc_hash, received_hash):
+        # Без логирования сравниваемых хешей — это секреты по сути.
+        logger.warning(
+            "validate_init_data: hash mismatch — токен в .env "
+            "не совпадает с тем, чем Telegram подписывает initData"
+        )
         return None
     try:
         user = json.loads(pairs["user"])
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as e:
+        logger.warning("validate_init_data: bad user JSON: %s", e)
         return None
     if not isinstance(user, dict) or "id" not in user:
+        logger.warning("validate_init_data: user missing 'id' field")
         return None
     return user
 
 
 async def current_user_id(x_init_data: str = Header(default="")) -> int:
-    """FastAPI-зависимость: валидирует initData из заголовка X-Init-Data."""
+    """
+    FastAPI-зависимость: валидирует initData и проверяет allowlist
+    (Phase 11.3). 401 — если подпись битая ИЛИ пользователя нет в
+    allowlist.
+    """
     user = validate_init_data(x_init_data, config.TELEGRAM_BOT_TOKEN or "")
     if user is None:
         raise HTTPException(status_code=401, detail="invalid init data")
-    return int(user["id"])
+    user_id = int(user["id"])
+    username = user.get("username")
+    if not config.is_user_allowed(user_id, username):
+        logger.warning(
+            "access denied: user_id=%s username=%s not in allowlist",
+            user_id, username,
+        )
+        raise HTTPException(status_code=403, detail="access denied")
+    return user_id
 
 
 def _now_utc() -> str:
@@ -278,6 +312,31 @@ async def healthz():
         except Exception as e:   # очень редко, но всё-таки страхуемся
             logger.warning("healthz counts failed: %s", e)
     return JSONResponse(body, status_code=200 if db_ok else 503)
+
+
+@app.get("/api/whoami")
+async def api_whoami(x_init_data: str = Header(default="")) -> dict:
+    """
+    Phase 11.3: диагностика авторизации без 401-выбрасывания.
+    Возвращает только публичные факты: валиден ли подпись, прошёл ли
+    allowlist. БЕЗ user_id/username (не показываем чужим). Удобно
+    дёргать из браузера/curl, чтобы понять, что не так.
+    """
+    user = validate_init_data(x_init_data, config.TELEGRAM_BOT_TOKEN or "")
+    if user is None:
+        return {
+            "ok": False, "reason": "invalid init data",
+            "token_set": bool(config.TELEGRAM_BOT_TOKEN),
+            "init_data_present": bool(x_init_data),
+        }
+    allowed = config.is_user_allowed(int(user["id"]), user.get("username"))
+    return {
+        "ok": True,
+        "allowed": allowed,
+        "allowlist_active": bool(
+            config.ALLOWED_USER_IDS or config.ALLOWED_USERNAMES
+        ),
+    }
 
 
 @app.get("/api/tasks")

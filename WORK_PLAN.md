@@ -593,6 +593,24 @@ Mini App» + «Нужно добавить раздел с заметками (�
   вырезаны handler-тесты — DB-слой остаётся, пользовательские сценарии
   живут в `test_webapp.py`. Планировщик (рассылка напоминаний и
   purge soft-deleted) сохранён. 196 тестов, TOTAL 99.30%.
+- **11.3 ✅ (PR #45):** Single-user whitelist + диагностика 401 +
+  smart-fullscreen. (a) Конфиг `ALLOWED_USER_IDS` / `ALLOWED_USERNAMES`
+  (CSV); пустые = доступ всем. `is_user_allowed(user_id, username)`
+  пускает по любому из двух. (b) `current_user_id` теперь возвращает
+  403 на «свой подпис, но не в allowlist»; 401 — на битую подпись.
+  `validate_init_data` пишет точечные WARNING'и (нет токена / нет
+  hash / нет user / mismatch), чтобы диагностировать причину прямо
+  из лога. Новый `GET /api/whoami` (без авторизации) — отдаёт
+  `{ok, allowed, allowlist_active}` для curl-диагностики. Bot-side:
+  `/start` и `fallback` отказывают «доступ ограничен». Scheduler
+  пропускает чужие user_id при активном ID-allowlist'е. (c)
+  Frontend: smart-fullscreen: на десктопных платформах (`tdesktop`,
+  `macos`, `web*`, `windows`, `linux`) — `tg.expand()` +
+  `tg.requestFullscreen()` (API 8.0); на мобиле — НЕ расширяем
+  (оставляем «маленькое окно», как просил пользователь). Страница
+  401/403 теперь информативная (platform, длина initData, какие
+  настройки проверять). `getInitData()` перечитывается на каждый
+  запрос. 221 тест.
 - **11.2 ✅ (PR #44):** Раздел заметок. БД: новая таблица `notes`
   (`id, user_id, title?, body, pinned, color, created_at, updated_at,
   deleted_at`). Функции `add_note`, `get_notes(include_deleted=)`,

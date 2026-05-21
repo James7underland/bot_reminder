@@ -1631,3 +1631,82 @@ deleted_at, валидатор payload `notes` is list, malformed-элемент
 **Статус:** PR #44 → merge → авто-деплой. После — пользователь
 проверяет: вкладка «📓 Заметки», создание/редактирование/удаление
 с undo, поиск, pin, цвета.
+
+---
+
+## Этап 48: Фаза 11.3 — single-user whitelist + диагностика 401 + smart-fullscreen
+
+**Дата:** 2026-05-21
+
+**Описание:** Ветка `phase/11.3-auth-fullscreen`. Три блока:
+
+**Контекст.** Пользователь сообщил, что после 11.2 при открытии Mini
+App показывается «Откройте приложение из Telegram» (наша 401-страница).
+Корневая причина — в продакшене из всех возможных:
+- пустой `TELEGRAM_BOT_TOKEN` в `.env` (Mini-App-only сервер
+  перезапущен, переменная не подхватилась),
+- невалидный хеш (токен не совпадает с тем, чем TG подписывает),
+- пустой `initData` (Mini App открыт вне TG).
+
+До этого PR логи об отказе были одинаковыми и не помогали диагностике.
+
+**(а) Whitelist по env.** В `config.py` добавлены `ALLOWED_USER_IDS`
+(set int) и `ALLOWED_USERNAMES` (set str), парсятся из CSV;
+`is_user_allowed(user_id, username)` пускает по любому из двух. Если
+оба пусты — доступ открыт (старое поведение). Username принимается с
+`@` и без. Пользователь просил «бот только для @e_rnst» —
+конфигурируется `ALLOWED_USERNAMES=e_rnst` или, лучше,
+`ALLOWED_USER_IDS=<numeric_id>` (стабильнее, username можно сменить).
+
+**(б) Серверная авторизация.**
+- `validate_init_data` пишет WARNING с конкретной причиной отказа
+  (нет токена, нет hash, нет user, mismatch) — БЕЗ leak'а самих
+  значений. Поможет понять, почему 401 прямо из `journalctl`.
+- `current_user_id` теперь различает **401** (битая подпись) и
+  **403** (подпись валидна, но не в allowlist).
+- Новый `GET /api/whoami` (без auth-зависимости) — возвращает
+  `{ok, allowed, allowlist_active, token_set, init_data_present}`.
+  Удобно `curl https://reminderr.ru/api/whoami -H "X-Init-Data: ..."`
+  чтобы понять, что не так.
+- На bot-стороне `/start` и `fallback_text` отказывают чужим
+  пользователям сообщением «Доступ к этому боту ограничен».
+- В `scheduler._notify`: при активном `ALLOWED_USER_IDS` задачи
+  чужих user_id пропускаются, но **помечаются как отправленные**
+  (`mark(task["id"])`) — иначе на каждом тике планировщик пытался
+  бы писать чужим, что приводит к Telegram flood-stop'у.
+
+**(в) Smart fullscreen.** Фронтенд:
+- `tg.platform` определяет среду; десктопные значения
+  (`tdesktop`/`macos`/`web`/`weba`/`webk`/`windows`/`linux`) →
+  `tg.expand()` + `tg.requestFullscreen()` (Bot API 8.0+, со
+  страховкой `try/catch` для старых клиентов);
+- мобильные (`android`/`ios`/`unknown`) → НЕ расширяем (как просил
+  пользователь — «маленькое окно на мобильном»).
+- `getInitData()` теперь читается перед каждым запросом, а не один
+  раз при загрузке — на некоторых клиентах TG поле дозаполняется
+  после первого тика.
+- 401- и 403-страницы переписаны: показывают, какие настройки
+  проверять, и техническую полезную инфу (`platform`, длина
+  `initData`). 401 + 403 теперь два разных сообщения.
+
+**Документация.** В `.env.example` добавлены `MINI_APP_URL`,
+`ALLOWED_USER_IDS`, `ALLOWED_USERNAMES`, `LOG_DIR` с комментариями.
+
+**Результат:** 221 тест зелёный (+11: allowlist разрешает по id и
+username, отказывает без; API 403 без allowlist'a; whoami без
+авторизации; whoami при активном allowlist'e даёт allowed=false;
+bot-сторона: deny и allow ветки `start`/`fallback_text`;
+`scheduler._notify` пропускает чужих и помечает их как отправленные);
+`bot.py` 98%, `scheduler.py`/`tzutil.py` 100%, `database.py`/
+`webapp.py` 99%, `config.py` 91%, TOTAL **98.78%**; ruff чист.
+
+**Статус деплоя.** После merge нужно обновить `.env` на VPS:
+- проверить `TELEGRAM_BOT_TOKEN` (валидный токен текущего бота);
+- добавить `ALLOWED_USER_IDS=<твой_telegram_id>` ИЛИ
+  `ALLOWED_USERNAMES=e_rnst`;
+- `systemctl restart bot_reminder bot_webapp`.
+Диагностика: `curl https://reminderr.ru/api/whoami` без заголовка
+— покажет, что initData пуст и token_set=true.
+
+**Статус:** PR #45 → merge → пользователь обновляет `.env` →
+смотрит Mini App. Если 401 ушёл — переходим к 11.4 (bulk-actions).
