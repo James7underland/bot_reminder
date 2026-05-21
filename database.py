@@ -140,6 +140,20 @@ def init_db():
     # Фаза 10.7: soft-delete для списков (с поддержкой undo).
     if "deleted_at" not in list_columns:
         cursor.execute("ALTER TABLE lists ADD COLUMN deleted_at TEXT")
+    # Фаза 11.2: таблица заметок (отдельно от задач).
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            title TEXT,
+            body TEXT NOT NULL,
+            pinned INTEGER NOT NULL DEFAULT 0,
+            color TEXT NOT NULL DEFAULT '#FEF3C7',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            deleted_at TEXT
+        )
+    ''')
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована.")
@@ -1413,6 +1427,12 @@ def get_user_stats(user_id: int) -> dict:
             "WHERE user_id = ? AND completed = 0", (user_id,),
         )
         oldest = cursor.fetchone()[0]
+        # Phase 11.2: счётчик активных заметок.
+        cursor.execute(
+            "SELECT COUNT(*) FROM notes WHERE user_id = ? "
+            "AND deleted_at IS NULL", (user_id,),
+        )
+        notes = cursor.fetchone()[0]
     finally:
         conn.close()
     return {
@@ -1422,6 +1442,7 @@ def get_user_stats(user_id: int) -> dict:
         "important": important,
         "steps_open": steps_open,
         "oldest_open_at": oldest,
+        "notes": notes,
     }
 
 
@@ -1504,6 +1525,22 @@ def export_user_data(user_id: int) -> dict:
     )
     tz_row = cursor.fetchone()
     tz = tz_row["timezone"] if tz_row else "UTC"
+    # Phase 11.2: заметки.
+    cursor.execute(
+        "SELECT title, body, pinned, color, created_at, updated_at "
+        "FROM notes WHERE user_id = ? AND deleted_at IS NULL "
+        "ORDER BY created_at, id",
+        (user_id,),
+    )
+    notes_rows = cursor.fetchall()
+    notes = [{
+        "title": r["title"],
+        "body": r["body"],
+        "pinned": bool(r["pinned"]),
+        "color": r["color"],
+        "created_at": r["created_at"],
+        "updated_at": r["updated_at"],
+    } for r in notes_rows]
     conn.close()
     return {
         "version": EXPORT_VERSION,
@@ -1511,6 +1548,7 @@ def export_user_data(user_id: int) -> dict:
         "user": {"id": user_id, "timezone": tz},
         "lists": lists,
         "tasks": tasks,
+        "notes": notes,
     }
 
 
@@ -1525,6 +1563,10 @@ def _validate_export_payload(payload: dict) -> str | None:
         return "missing 'lists' array"
     if not isinstance(payload.get("tasks"), list):
         return "missing 'tasks' array"
+    # Phase 11.2: notes — опционально (бэкап без них тоже валиден).
+    notes = payload.get("notes")
+    if notes is not None and not isinstance(notes, list):
+        return "'notes' must be an array if present"
     return None
 
 
@@ -1558,6 +1600,7 @@ def import_user_data(
             # FK ON DELETE CASCADE на steps → удалятся вместе с задачами.
             cursor.execute("DELETE FROM tasks WHERE user_id = ?", (user_id,))
             cursor.execute("DELETE FROM lists WHERE user_id = ?", (user_id,))
+            cursor.execute("DELETE FROM notes WHERE user_id = ?", (user_id,))
 
         # Списки: имя → id, переиспользуем существующие в merge.
         # Soft-deleted списки (Phase 10.7) НЕ переиспользуем — пользователь
@@ -1647,6 +1690,32 @@ def import_user_data(
                 (user_id, tz, tz),
             )
 
+        # Phase 11.2: импорт заметок. replace-режим уже вычистил
+        # пользовательские заметки выше (см. начало функции); merge —
+        # дописывает (дубликаты не отсеиваем по контенту).
+        notes_added = 0
+        for note in (payload.get("notes") or []):
+            if not isinstance(note, dict):
+                continue
+            body = (note.get("body") or "").strip()
+            if not body:
+                continue
+            title = (note.get("title") or "").strip() or None
+            color = note.get("color") if is_valid_color(note.get("color")) \
+                else "#FEF3C7"
+            cursor.execute(
+                "INSERT INTO notes (user_id, title, body, pinned, color, "
+                "created_at, updated_at) VALUES (?, ?, ?, ?, ?, "
+                "COALESCE(?, CURRENT_TIMESTAMP), "
+                "COALESCE(?, CURRENT_TIMESTAMP))",
+                (
+                    user_id, title, body,
+                    1 if note.get("pinned") else 0, color,
+                    note.get("created_at"), note.get("updated_at"),
+                ),
+            )
+            notes_added += 1
+
         conn.commit()
     except Exception:
         conn.rollback()
@@ -1654,7 +1723,239 @@ def import_user_data(
     finally:
         conn.close()
     logger.info(
-        "import user=%s mode=%s lists=%d tasks=%d steps=%d",
-        user_id, mode, lists_added, tasks_added, steps_added,
+        "import user=%s mode=%s lists=%d tasks=%d steps=%d notes=%d",
+        user_id, mode, lists_added, tasks_added, steps_added, notes_added,
     )
-    return {"lists": lists_added, "tasks": tasks_added, "steps": steps_added}
+    return {
+        "lists": lists_added, "tasks": tasks_added,
+        "steps": steps_added, "notes": notes_added,
+    }
+
+
+# --- Заметки (Фаза 11.2) ---
+
+def _row_to_note(row) -> dict:
+    n = dict(row)
+    n["pinned"] = bool(n["pinned"])
+    return n
+
+
+def add_note(
+    user_id: int,
+    body: str,
+    title: str | None = None,
+    color: str | None = None,
+) -> int | None:
+    """
+    Phase 11.2: создаёт заметку. Тело обязательно (пустая строка → None,
+    функция возвращает None). Заголовок и цвет — опциональны (дефолт
+    цвета задаёт CREATE TABLE).
+    """
+    body = (body or "").strip()
+    if not body:
+        logger.warning("add_note: empty body for user=%s", user_id)
+        return None
+    title = (title or "").strip() or None
+    if color is not None and not is_valid_color(color):
+        logger.warning("add_note: bad color %r", color)
+        return None
+    conn = get_connection()
+    cursor = conn.cursor()
+    if color:
+        cursor.execute(
+            "INSERT INTO notes (user_id, title, body, color) "
+            "VALUES (?, ?, ?, ?)",
+            (user_id, title, body, color),
+        )
+    else:
+        cursor.execute(
+            "INSERT INTO notes (user_id, title, body) VALUES (?, ?, ?)",
+            (user_id, title, body),
+        )
+    note_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    logger.info("user=%s created note=%s", user_id, note_id)
+    return note_id
+
+
+def get_notes(
+    user_id: int, include_deleted: bool = False
+) -> list[dict]:
+    """
+    Активные заметки пользователя: закреплённые сверху, остальные по
+    `updated_at DESC, id DESC`. `include_deleted` — для эндпоинта
+    восстановления и cron-purge.
+    """
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    if include_deleted:
+        cursor.execute(
+            "SELECT * FROM notes WHERE user_id = ? "
+            "ORDER BY pinned DESC, updated_at DESC, id DESC",
+            (user_id,),
+        )
+    else:
+        cursor.execute(
+            "SELECT * FROM notes WHERE user_id = ? AND deleted_at IS NULL "
+            "ORDER BY pinned DESC, updated_at DESC, id DESC",
+            (user_id,),
+        )
+    rows = cursor.fetchall()
+    conn.close()
+    return [_row_to_note(r) for r in rows]
+
+
+def get_note(note_id: int) -> dict | None:
+    """Одна заметка по id (любой статус). None — если не существует."""
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM notes WHERE id = ?", (note_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return _row_to_note(row) if row else None
+
+
+def update_note(
+    note_id: int,
+    *,
+    title: str | None = None,
+    body: str | None = None,
+    pinned: bool | None = None,
+    color: str | None = None,
+    clear_title: bool = False,
+) -> bool:
+    """
+    Phase 11.2: частичный апдейт. `None` для поля = не трогать.
+    `clear_title=True` — обнулить заголовок (т.к. None уже использован
+    как «не трогать»). Возвращает False, если заметки нет / нечего
+    обновлять / битый цвет.
+    """
+    sets, params = [], []
+    if body is not None:
+        body = body.strip()
+        if not body:
+            return False     # пустое тело недопустимо
+        sets.append("body = ?")
+        params.append(body)
+    if clear_title:
+        sets.append("title = NULL")
+    elif title is not None:
+        sets.append("title = ?")
+        params.append(title.strip() or None)
+    if pinned is not None:
+        sets.append("pinned = ?")
+        params.append(1 if pinned else 0)
+    if color is not None:
+        if not is_valid_color(color):
+            return False
+        sets.append("color = ?")
+        params.append(color)
+    if not sets:
+        return False
+    sets.append("updated_at = CURRENT_TIMESTAMP")
+    params.append(note_id)
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        f"UPDATE notes SET {', '.join(sets)} WHERE id = ?", params
+    )
+    rows = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows > 0:
+        logger.info("note=%s updated (%s)", note_id, ",".join(sets[:-1]))
+        return True
+    logger.warning("update_note: note=%s not found", note_id)
+    return False
+
+
+def delete_note(note_id: int) -> bool:
+    """Soft-delete заметки (Phase 11.2 / 10.7-pattern)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE notes SET deleted_at = CURRENT_TIMESTAMP "
+        "WHERE id = ? AND deleted_at IS NULL",
+        (note_id,),
+    )
+    rows = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows > 0:
+        logger.info("note=%s soft-deleted", note_id)
+        return True
+    logger.warning("delete_note: note=%s not found or already deleted", note_id)
+    return False
+
+
+def restore_note(note_id: int) -> bool:
+    """Снимает soft-delete с заметки. False если не была удалена."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE notes SET deleted_at = NULL "
+        "WHERE id = ? AND deleted_at IS NOT NULL",
+        (note_id,),
+    )
+    rows = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows > 0:
+        logger.info("note=%s restored", note_id)
+        return True
+    logger.warning("restore_note: note=%s not found or not deleted", note_id)
+    return False
+
+
+def purge_deleted_notes(older_than_hours: int = 24) -> int:
+    """Физическое удаление заметок, удалённых дольше N часов."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("BEGIN")
+        cursor.execute(
+            "DELETE FROM notes WHERE deleted_at IS NOT NULL AND "
+            "datetime(deleted_at) <= datetime('now', ?)",
+            (f"-{int(older_than_hours)} hours",),
+        )
+        n = cursor.rowcount
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    if n:
+        logger.info("purge_deleted_notes: removed %d note(s)", n)
+    return n
+
+
+def search_notes(user_id: int, query: str) -> list[dict]:
+    """
+    Phase 11.2: поиск по заметкам — подстрока в title или body
+    (case-insensitive, python-side для кириллицы). Закреплённые
+    выводятся сначала.
+    """
+    q = (query or "").strip().lower()
+    if not q:
+        return []
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM notes WHERE user_id = ? AND deleted_at IS NULL "
+        "ORDER BY pinned DESC, updated_at DESC, id DESC",
+        (user_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    out = []
+    for r in rows:
+        title = (r["title"] or "").lower()
+        body = (r["body"] or "").lower()
+        if q in title or q in body:
+            out.append(_row_to_note(r))
+    return out

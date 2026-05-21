@@ -593,5 +593,20 @@ Mini App» + «Нужно добавить раздел с заметками (�
   вырезаны handler-тесты — DB-слой остаётся, пользовательские сценарии
   живут в `test_webapp.py`. Планировщик (рассылка напоминаний и
   purge soft-deleted) сохранён. 196 тестов, TOTAL 99.30%.
-- 11.2 Notes section (DB + API + Mini App view).
+- **11.2 ✅ (PR #44):** Раздел заметок. БД: новая таблица `notes`
+  (`id, user_id, title?, body, pinned, color, created_at, updated_at,
+  deleted_at`). Функции `add_note`, `get_notes(include_deleted=)`,
+  `get_note`, `update_note(*, title, body, pinned, color,
+  clear_title)`, `delete_note`/`restore_note` (soft-delete по
+  10.7-паттерну), `purge_deleted_notes(hours=24)`, `search_notes`.
+  Pinned-first, потом `updated_at DESC, id DESC`. API: GET/POST
+  `/api/notes`, PATCH/DELETE/POST-restore `/api/notes/{id}`, поиск
+  через `?search=`. Scheduler-job `purge_deleted` теперь чистит и
+  заметки. Export/import (Phase 10.2): добавлен `notes` массив в
+  схеме (опциональный — старые бэкапы без `notes` работают).
+  `get_user_stats` отдаёт `notes`. Frontend: вкладки «📋 Задачи /
+  📓 Заметки», отдельная секция с grid 2×N карточек, поиск,
+  редактор-модал (заголовок, тело, 8 цветов пастелью, pin/unpin,
+  удаление с undo-тостом). Состояние секции персистится в
+  localStorage. 210 тестов, TOTAL 98.93%.
 

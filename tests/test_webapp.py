@@ -910,7 +910,8 @@ def test_db_export_user_data_roundtrip():
     # Импортируем тому же payload'у — но другому user_id, чтобы не
     # путаться. Должен пересоздать всё в полном объёме.
     counts = import_user_data(200, payload, mode="merge")
-    assert counts == {"lists": 1, "tasks": 2, "steps": 2}
+    # С Phase 11.2 счётчик включает notes (в этом тесте — 0).
+    assert counts == {"lists": 1, "tasks": 2, "steps": 2, "notes": 0}
     assert {x["name"] for x in get_lists(200)} == {"Work"}
     new_alpha = next(t for t in get_tasks(200) if t["description"] == "alpha")
     assert new_alpha["important"] is True
@@ -979,7 +980,7 @@ def test_db_import_skips_malformed_entries_silently():
         ],
     }
     counts = import_user_data(104, payload, mode="merge")
-    assert counts == {"lists": 1, "tasks": 1, "steps": 1}
+    assert counts == {"lists": 1, "tasks": 1, "steps": 1, "notes": 0}
     lists = get_lists(104)
     assert [x["name"] for x in lists] == ["Real"]
     assert lists[0]["color"] == "#0088CC"   # fallback после bad color
@@ -1607,3 +1608,297 @@ def test_db_import_merge_skips_soft_deleted_lists():
     # И deleted'й, и новый присутствуют в полной выборке.
     all_lists = get_lists(502, include_deleted=True)
     assert len([x for x in all_lists if x["name"] == "L"]) == 2
+
+
+# --- Phase 11.2: Notes ---
+
+def test_db_add_get_update_note():
+    from database import (
+        add_note,
+        get_note,
+        get_notes,
+        update_note,
+    )
+    nid = add_note(600, "hello world")
+    assert isinstance(nid, int) and nid > 0
+    note = get_note(nid)
+    assert note["body"] == "hello world"
+    assert note["title"] is None
+    assert note["pinned"] is False
+    assert note["color"] == "#FEF3C7"
+    assert note["deleted_at"] is None
+    assert update_note(nid, title="Greeting", body="hi", pinned=True,
+                       color="#10B981") is True
+    note = get_note(nid)
+    assert note["title"] == "Greeting"
+    assert note["body"] == "hi"
+    assert note["pinned"] is True
+    assert note["color"] == "#10B981"
+    # clear_title
+    assert update_note(nid, clear_title=True) is True
+    assert get_note(nid)["title"] is None
+    # Пустое тело недопустимо
+    assert update_note(nid, body="   ") is False
+    # Битый цвет
+    assert update_note(nid, color="red") is False
+    # Ничего не передано — тоже False
+    assert update_note(nid) is False
+    # Несуществующий
+    assert update_note(999999, body="x") is False
+    # Отсутствует в get_notes другого пользователя
+    assert get_notes(700) == []
+    assert any(n["id"] == nid for n in get_notes(600))
+
+
+def test_db_add_note_validation():
+    from database import add_note
+    # Пустое тело → None
+    assert add_note(601, "   ") is None
+    # Битый цвет → None (не сохраняем сломанные данные)
+    assert add_note(601, "body", color="not-a-hex") is None
+
+
+def test_db_get_notes_pinned_first_then_updated_desc():
+    """Pinned-first, потом по updated_at DESC (последнее изменение наверху)."""
+    import time
+
+    from database import add_note, get_notes, update_note
+    a = add_note(602, "first")
+    time.sleep(0.05)
+    b = add_note(602, "second")
+    time.sleep(0.05)
+    c = add_note(602, "third")
+    # По умолчанию: c, b, a (updated_at desc).
+    ids = [n["id"] for n in get_notes(602)]
+    assert ids == [c, b, a]
+    # Закрепим a → она наверху.
+    update_note(a, pinned=True)
+    ids = [n["id"] for n in get_notes(602)]
+    assert ids[0] == a
+
+
+def test_db_search_notes():
+    from database import add_note, search_notes
+    n = add_note(603, "купить хлеб и молоко", title="продукты")
+    add_note(603, "позвонить маме")
+    # Подстрока в body
+    assert [x["id"] for x in search_notes(603, "хлеб")] == [n]
+    # Подстрока в title (case-insensitive)
+    assert [x["id"] for x in search_notes(603, "ПРОДУКТЫ")] == [n]
+    # Не найдено
+    assert search_notes(603, "zzz") == []
+    # Пустой запрос
+    assert search_notes(603, "  ") == []
+
+
+def test_db_delete_restore_purge_note():
+    from database import (
+        add_note,
+        delete_note,
+        get_connection,
+        get_note,
+        get_notes,
+        purge_deleted_notes,
+        restore_note,
+    )
+    nid = add_note(604, "to delete")
+    assert delete_note(nid) is True
+    assert get_notes(604) == []
+    # Видна через get_note (любой статус)
+    assert get_note(nid)["deleted_at"] is not None
+    # Restore
+    assert restore_note(nid) is True
+    assert get_notes(604)[0]["id"] == nid
+    # Повторный restore — False
+    assert restore_note(nid) is False
+    # Удаляем снова и сдвигаем deleted_at в прошлое
+    delete_note(nid)
+    conn = get_connection()
+    conn.execute(
+        "UPDATE notes SET deleted_at = datetime('now', '-2 days') "
+        "WHERE id = ?", (nid,)
+    )
+    conn.commit()
+    conn.close()
+    n = purge_deleted_notes(older_than_hours=24)
+    assert n == 1
+    assert get_note(nid) is None
+    # Повторный purge — 0
+    assert purge_deleted_notes(older_than_hours=24) == 0
+
+
+def test_api_notes_crud(client):
+    # Создание
+    r = client.post(
+        "/api/notes",
+        json={"body": "первая заметка", "title": "title"},
+        headers=hdr(),
+    )
+    assert r.status_code == 200
+    nid = r.json()["id"]
+    assert r.json()["title"] == "title" and r.json()["body"] == "первая заметка"
+    # Пустое тело → 422
+    assert client.post(
+        "/api/notes", json={"body": "   "}, headers=hdr()
+    ).status_code == 422
+    # Список
+    lst = client.get("/api/notes", headers=hdr()).json()
+    assert isinstance(lst, list) and len(lst) == 1
+    # PATCH
+    p = client.patch(
+        f"/api/notes/{nid}",
+        json={"pinned": True, "color": "#10B981"},
+        headers=hdr(),
+    )
+    assert p.status_code == 200 and p.json()["pinned"] is True
+    assert p.json()["color"] == "#10B981"
+    # Пустой PATCH → 422
+    assert client.patch(
+        f"/api/notes/{nid}", json={}, headers=hdr()
+    ).status_code == 422
+    # Чужая → 404
+    assert client.patch(
+        f"/api/notes/{nid}", json={"body": "x"}, headers=hdr(99)
+    ).status_code == 404
+    # Поиск
+    r2 = client.get(
+        "/api/notes?search=первая", headers=hdr()
+    ).json()
+    assert len(r2) == 1 and r2[0]["id"] == nid
+
+
+def test_api_note_delete_restore(client):
+    nid = client.post(
+        "/api/notes", json={"body": "for delete"}, headers=hdr()
+    ).json()["id"]
+    # Чужой delete → 404
+    assert client.request(
+        "DELETE", f"/api/notes/{nid}", headers=hdr(99)
+    ).status_code == 404
+    # Свой delete → 200, исчез из списка
+    assert client.request(
+        "DELETE", f"/api/notes/{nid}", headers=hdr()
+    ).json() == {"ok": True}
+    assert client.get("/api/notes", headers=hdr()).json() == []
+    # Restore: активный → 404
+    nid2 = client.post(
+        "/api/notes", json={"body": "active"}, headers=hdr()
+    ).json()["id"]
+    assert client.post(
+        f"/api/notes/{nid2}/restore", headers=hdr()
+    ).status_code == 404
+    # Чужой → 404
+    assert client.post(
+        f"/api/notes/{nid}/restore", headers=hdr(99)
+    ).status_code == 404
+    # Свой deleted → 200, появляется заново
+    r = client.post(f"/api/notes/{nid}/restore", headers=hdr())
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    assert any(n["id"] == nid for n in
+               client.get("/api/notes", headers=hdr()).json())
+
+
+def test_export_import_includes_notes(client):
+    nid = client.post(
+        "/api/notes",
+        json={"body": "carry me", "title": "important"},
+        headers=hdr(),
+    ).json()["id"]
+    client.patch(
+        f"/api/notes/{nid}",
+        json={"pinned": True, "color": "#FFAA00"},
+        headers=hdr(),
+    )
+    exp = client.get("/api/export", headers=hdr()).json()
+    assert isinstance(exp["notes"], list) and len(exp["notes"]) == 1
+    src = exp["notes"][0]
+    assert src["body"] == "carry me" and src["pinned"] is True
+    assert src["color"] == "#FFAA00"
+    # Импорт другому пользователю
+    r = client.post(
+        "/api/import",
+        json={"payload": exp, "mode": "merge"},
+        headers=hdr(800),
+    )
+    assert r.status_code == 200 and r.json()["notes"] == 1
+    dst = client.get("/api/notes", headers=hdr(800)).json()
+    assert len(dst) == 1 and dst[0]["body"] == "carry me"
+    assert dst[0]["pinned"] is True
+    # Бэкап без notes — не должен ломать импорт
+    legacy = {"version": 1, "lists": [], "tasks": []}
+    r2 = client.post(
+        "/api/import", json={"payload": legacy, "mode": "merge"},
+        headers=hdr(800),
+    )
+    assert r2.status_code == 200 and r2.json()["notes"] == 0
+
+
+def test_user_stats_includes_notes():
+    from database import add_note, get_user_stats
+    add_note(900, "a")
+    add_note(900, "b")
+    s = get_user_stats(900)
+    assert s["notes"] == 2
+
+
+def test_api_create_note_with_pinned_true(client):
+    """POST /api/notes принимает pinned и сразу делает PATCH-пин."""
+    r = client.post(
+        "/api/notes",
+        json={"body": "pin me", "pinned": True, "color": "#10B981"},
+        headers=hdr(),
+    )
+    assert r.status_code == 200 and r.json()["pinned"] is True
+
+
+def test_api_create_note_bad_color_422(client):
+    r = client.post(
+        "/api/notes", json={"body": "x", "color": "red"}, headers=hdr()
+    )
+    assert r.status_code == 422
+
+
+def test_db_import_validates_notes_must_be_list():
+    from database import import_user_data
+    bad = {"version": 1, "lists": [], "tasks": [], "notes": "no"}
+    try:
+        import_user_data(901, bad, mode="merge")
+    except ValueError as e:
+        assert "notes" in str(e).lower()
+        return
+    raise AssertionError("expected ValueError for bad notes type")
+
+
+def test_db_import_skips_malformed_notes():
+    """Phase 11.2: импорт пропускает кривые элементы в notes."""
+    from database import get_notes, import_user_data
+    payload = {
+        "version": 1, "lists": [], "tasks": [],
+        "notes": [
+            "not a dict",
+            {"body": ""},                   # пустое тело
+            {"body": "good", "color": "not-hex"},   # битый цвет → fallback
+        ],
+    }
+    counts = import_user_data(902, payload, mode="merge")
+    assert counts["notes"] == 1
+    notes = get_notes(902)
+    assert len(notes) == 1 and notes[0]["body"] == "good"
+    assert notes[0]["color"] == "#FEF3C7"   # fallback дефолт
+
+
+def test_db_import_replace_wipes_notes():
+    from database import (
+        add_note,
+        export_user_data,
+        get_notes,
+        import_user_data,
+    )
+    add_note(903, "to-keep")
+    payload = export_user_data(903)
+    add_note(903, "garbage")
+    # replace: всё стирается, потом импортируется только to-keep.
+    counts = import_user_data(903, payload, mode="replace")
+    assert counts["notes"] == 1
+    bodies = [n["body"] for n in get_notes(903)]
+    assert bodies == ["to-keep"]
