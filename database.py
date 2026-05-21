@@ -59,7 +59,8 @@ def init_db():
             reminder_at TEXT,
             overdue_notified INTEGER NOT NULL DEFAULT 0,
             order_index INTEGER,
-            note_id INTEGER
+            note_id INTEGER,
+            deleted_at TEXT
         )
     ''')
     cursor.execute('''
@@ -134,6 +135,9 @@ def init_db():
     # Фаза 11.6: ссылка задачи на заметку (опционально).
     if "note_id" not in columns:
         cursor.execute("ALTER TABLE tasks ADD COLUMN note_id INTEGER")
+    # Фаза 11.10: soft-delete для задач (с поддержкой undo).
+    if "deleted_at" not in columns:
+        cursor.execute("ALTER TABLE tasks ADD COLUMN deleted_at TEXT")
     # Фаза 9.5: цвет списка (визуальная подсказка в Mini App).
     list_columns = {row[1] for row in cursor.execute("PRAGMA table_info(lists)")}
     if "color" not in list_columns:
@@ -230,7 +234,9 @@ def get_tasks(
     # sort="created".
     order = _SORT_ORDERS.get(sort, "order_index, created_at")
     cursor.execute(
-        f"SELECT * FROM tasks WHERE user_id = ? AND completed = ? ORDER BY {order}",
+        # Phase 11.10: soft-deleted задачи исключаются из всех видов.
+        f"SELECT * FROM tasks WHERE user_id = ? AND completed = ? "
+        f"AND deleted_at IS NULL ORDER BY {order}",
         (user_id, flag),
     )
 
@@ -365,6 +371,76 @@ def mark_task_undone(task_id: int) -> bool:
         return True
     logger.warning("mark_task_undone: task=%s not found", task_id)
     return False
+
+
+# --- Phase 11.10: soft-delete задач с поддержкой undo ---
+
+def delete_task(task_id: int) -> bool:
+    """
+    Soft-delete: помечает `deleted_at = now()`. Все запросы списка
+    исключают такие задачи. Повторный вызов = False (idempotency).
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE tasks SET deleted_at = CURRENT_TIMESTAMP "
+        "WHERE id = ? AND deleted_at IS NULL",
+        (task_id,),
+    )
+    rows = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows > 0:
+        logger.info("task=%s soft-deleted", task_id)
+        return True
+    logger.warning("delete_task: task=%s not found or already deleted", task_id)
+    return False
+
+
+def restore_task(task_id: int) -> bool:
+    """Снимает soft-delete. False — если задача не была удалена."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE tasks SET deleted_at = NULL "
+        "WHERE id = ? AND deleted_at IS NOT NULL",
+        (task_id,),
+    )
+    rows = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows > 0:
+        logger.info("task=%s restored", task_id)
+        return True
+    logger.warning("restore_task: task=%s not found or not deleted", task_id)
+    return False
+
+
+def purge_deleted_tasks(older_than_hours: int = 24) -> int:
+    """
+    Phase 11.10: физически удаляет задачи, помеченные deleted дольше
+    `older_than_hours`. Подзадачи (steps) удаляются каскадом по FK
+    `ON DELETE CASCADE`. Используется hourly job из scheduler.py.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("BEGIN")
+        cursor.execute(
+            "DELETE FROM tasks WHERE deleted_at IS NOT NULL "
+            "AND datetime(deleted_at) <= datetime('now', ?)",
+            (f"-{int(older_than_hours)} hours",),
+        )
+        n = cursor.rowcount
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    if n:
+        logger.info("purge_deleted_tasks: removed %d task(s)", n)
+    return n
 
 
 # --- Списки/категории (Фаза 5.2) ---
@@ -572,13 +648,15 @@ def get_tasks_by_list(
     if list_id is None:
         cursor.execute(
             "SELECT * FROM tasks WHERE user_id = ? AND completed = ? "
-            "AND list_id IS NULL ORDER BY order_index, created_at",
+            "AND list_id IS NULL AND deleted_at IS NULL "
+            "ORDER BY order_index, created_at",
             (user_id, flag),
         )
     else:
         cursor.execute(
             "SELECT * FROM tasks WHERE user_id = ? AND completed = ? "
-            "AND list_id = ? ORDER BY order_index, created_at",
+            "AND list_id = ? AND deleted_at IS NULL "
+            "ORDER BY order_index, created_at",
             (user_id, flag, list_id),
         )
     rows = cursor.fetchall()
@@ -809,7 +887,8 @@ def get_steps_counts(user_id: int) -> dict[int, dict[str, int]]:
         "SELECT s.task_id, COUNT(*) AS total, "
         "SUM(CASE WHEN s.completed = 1 THEN 1 ELSE 0 END) AS done "
         "FROM steps s JOIN tasks t ON t.id = s.task_id "
-        "WHERE t.user_id = ? GROUP BY s.task_id",
+        "WHERE t.user_id = ? AND t.deleted_at IS NULL "
+        "GROUP BY s.task_id",
         (user_id,),
     )
     result = {row[0]: {"done": int(row[2] or 0), "total": int(row[1])}
@@ -934,7 +1013,8 @@ def get_myday(user_id: int, day: str) -> list[dict]:
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT * FROM tasks WHERE user_id = ? AND completed = 0 AND ("
+        "SELECT * FROM tasks WHERE user_id = ? AND completed = 0 "
+        "AND deleted_at IS NULL AND ("
         "(due_date IS NOT NULL AND substr(due_date, 1, 10) = ?) "
         "OR myday_date = ?) ORDER BY due_date IS NULL, due_date, created_at",
         (user_id, day, day),
@@ -969,6 +1049,7 @@ def get_planned(user_id: int) -> list[dict]:
     cursor = conn.cursor()
     cursor.execute(
         "SELECT * FROM tasks WHERE user_id = ? AND completed = 0 "
+        "AND deleted_at IS NULL "
         "AND (deadline IS NOT NULL OR reminder_at IS NOT NULL) "
         "ORDER BY deadline IS NULL, deadline, "
         "reminder_at IS NULL, reminder_at, created_at",
@@ -986,6 +1067,7 @@ def get_important_tasks(user_id: int) -> list[dict]:
     cursor = conn.cursor()
     cursor.execute(
         "SELECT * FROM tasks WHERE user_id = ? AND completed = 0 "
+        "AND deleted_at IS NULL "
         "AND important = 1 ORDER BY deadline IS NULL, deadline, created_at",
         (user_id,),
     )
@@ -1010,7 +1092,7 @@ def search_tasks(user_id: int, query: str) -> list[dict]:
     cursor = conn.cursor()
     cursor.execute(
         "SELECT * FROM tasks WHERE user_id = ? AND completed = 0 "
-        "ORDER BY created_at",
+        "AND deleted_at IS NULL ORDER BY created_at",
         (user_id,),
     )
     rows = cursor.fetchall()
@@ -1151,6 +1233,7 @@ def get_due_reminders(now: str) -> list[dict]:
     cursor = conn.cursor()
     cursor.execute(
         "SELECT * FROM tasks WHERE completed = 0 AND reminder_sent = 0 "
+        "AND deleted_at IS NULL "
         "AND reminder_at IS NOT NULL AND reminder_at <= ? "
         "ORDER BY reminder_at",
         (now,),
@@ -1170,6 +1253,7 @@ def get_overdue_tasks(now: str) -> list[dict]:
     cursor = conn.cursor()
     cursor.execute(
         "SELECT * FROM tasks WHERE completed = 0 AND overdue_notified = 0 "
+        "AND deleted_at IS NULL "
         "AND deadline IS NOT NULL AND deadline < ? ORDER BY deadline",
         (now,),
     )
@@ -1231,14 +1315,16 @@ def _move_task(task_id: int, direction: int) -> bool:
     if direction < 0:
         cursor.execute(
             f"SELECT id, order_index FROM tasks WHERE user_id = ? "
-            f"AND completed = 0 AND order_index < ? {list_clause} "
+            f"AND completed = 0 AND deleted_at IS NULL "
+            f"AND order_index < ? {list_clause} "
             "ORDER BY order_index DESC, id DESC LIMIT 1",
             params,
         )
     else:
         cursor.execute(
             f"SELECT id, order_index FROM tasks WHERE user_id = ? "
-            f"AND completed = 0 AND order_index > ? {list_clause} "
+            f"AND completed = 0 AND deleted_at IS NULL "
+            f"AND order_index > ? {list_clause} "
             "ORDER BY order_index, id LIMIT 1",
             params,
         )
@@ -1289,27 +1375,27 @@ def reorder_task(task_id: int, after_task_id: int | None) -> bool:
     cursor = conn.cursor()
     try:
         cursor.execute(
-            "SELECT user_id, list_id, completed FROM tasks WHERE id = ?",
+            "SELECT user_id, list_id, completed, deleted_at "
+            "FROM tasks WHERE id = ?",
             (task_id,),
         )
         row = cursor.fetchone()
-        if row is None or row["completed"]:
+        if row is None or row["completed"] or row["deleted_at"]:
             return False
         user_id, list_id = row["user_id"], row["list_id"]
-        # Берём только активных соседей (выполненные не отображаются и
-        # не должны влиять на порядок). Сортировка стабильна по
-        # текущему order_index, потом по created_at, потом по id.
+        # Берём только активных соседей (выполненные/удалённые не
+        # отображаются и не должны влиять на порядок).
         if list_id is None:
             cursor.execute(
                 "SELECT id FROM tasks WHERE user_id = ? AND completed = 0 "
-                "AND list_id IS NULL "
+                "AND deleted_at IS NULL AND list_id IS NULL "
                 "ORDER BY order_index, created_at, id",
                 (user_id,),
             )
         else:
             cursor.execute(
                 "SELECT id FROM tasks WHERE user_id = ? AND completed = 0 "
-                "AND list_id = ? "
+                "AND deleted_at IS NULL AND list_id = ? "
                 "ORDER BY order_index, created_at, id",
                 (user_id, list_id),
             )
@@ -1396,7 +1482,8 @@ def bulk_update_tasks(
         cursor = conn.cursor()
         cursor.execute(
             f"SELECT id FROM tasks WHERE user_id = ? "
-            f"AND completed = 0 AND id IN ({placeholders})",
+            f"AND completed = 0 AND deleted_at IS NULL "
+            f"AND id IN ({placeholders})",
             (user_id, *clean_ids),
         )
         own_ids = [r["id"] for r in cursor.fetchall()]
@@ -1445,7 +1532,7 @@ def bulk_update_tasks(
     cursor = conn.cursor()
     cursor.execute(
         f"UPDATE tasks SET {sql_assign} WHERE user_id = ? "
-        f"AND id IN ({placeholders})",
+        f"AND deleted_at IS NULL AND id IN ({placeholders})",
         (*params, user_id, *clean_ids),
     )
     affected = cursor.rowcount
@@ -1516,13 +1603,16 @@ def get_user_stats(user_id: int) -> dict:
     conn = get_connection()
     try:
         cursor = conn.cursor()
+        # Все COUNT'ы по задачам исключают soft-deleted (Phase 11.10).
         cursor.execute(
-            "SELECT COUNT(*) FROM tasks WHERE user_id = ? AND completed = 0",
+            "SELECT COUNT(*) FROM tasks WHERE user_id = ? AND completed = 0 "
+            "AND deleted_at IS NULL",
             (user_id,),
         )
         active = cursor.fetchone()[0]
         cursor.execute(
-            "SELECT COUNT(*) FROM tasks WHERE user_id = ? AND completed = 1",
+            "SELECT COUNT(*) FROM tasks WHERE user_id = ? AND completed = 1 "
+            "AND deleted_at IS NULL",
             (user_id,),
         )
         completed = cursor.fetchone()[0]
@@ -1532,17 +1622,21 @@ def get_user_stats(user_id: int) -> dict:
         lists_n = cursor.fetchone()[0]
         cursor.execute(
             "SELECT COUNT(*) FROM tasks WHERE user_id = ? AND completed = 0 "
-            "AND important = 1", (user_id,),
+            "AND deleted_at IS NULL AND important = 1",
+            (user_id,),
         )
         important = cursor.fetchone()[0]
         cursor.execute(
             "SELECT COUNT(*) FROM steps s JOIN tasks t ON t.id = s.task_id "
-            "WHERE t.user_id = ? AND s.completed = 0", (user_id,),
+            "WHERE t.user_id = ? AND t.deleted_at IS NULL "
+            "AND s.completed = 0",
+            (user_id,),
         )
         steps_open = cursor.fetchone()[0]
         cursor.execute(
             "SELECT MIN(created_at) FROM tasks "
-            "WHERE user_id = ? AND completed = 0", (user_id,),
+            "WHERE user_id = ? AND completed = 0 AND deleted_at IS NULL",
+            (user_id,),
         )
         oldest = cursor.fetchone()[0]
         # Phase 11.2: счётчик активных заметок.
@@ -1599,9 +1693,10 @@ def export_user_data(user_id: int) -> dict:
     id_to_name = {row["id"]: row["name"] for row in lists_rows}
     lists = [{"name": r["name"], "color": r["color"],
               "created_at": r["created_at"]} for r in lists_rows]
-    # Задачи
+    # Задачи. Phase 11.10: soft-deleted задачи в экспорт не идут —
+    # их 24-часовое окно не должно тянуться через бэкап.
     cursor.execute(
-        "SELECT * FROM tasks WHERE user_id = ? "
+        "SELECT * FROM tasks WHERE user_id = ? AND deleted_at IS NULL "
         "ORDER BY order_index, created_at, id",
         (user_id,),
     )
@@ -2116,6 +2211,7 @@ def get_tasks_linked_to_note(user_id: int, note_id: int) -> list[dict]:
     cursor.execute(
         "SELECT id, description, completed, important, list_id "
         "FROM tasks WHERE user_id = ? AND note_id = ? AND completed = 0 "
+        "AND deleted_at IS NULL "
         "ORDER BY order_index, created_at, id",
         (user_id, note_id),
     )

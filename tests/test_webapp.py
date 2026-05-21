@@ -2217,3 +2217,142 @@ def test_api_note_tasks_endpoint(client):
     assert client.get(
         f"/api/notes/{nid}/tasks", headers=hdr(99)
     ).status_code == 404
+
+
+# --- Phase 11.10: soft-delete + restore + purge tasks ---
+
+def test_db_delete_task_hides_from_lists():
+    from database import (
+        add_task,
+        delete_task,
+        get_tasks,
+    )
+    a = add_task(3000, "keep")
+    b = add_task(3000, "drop")
+    assert delete_task(b) is True
+    # «drop» исчезла из активных
+    assert [t["id"] for t in get_tasks(3000)] == [a]
+    # Повторный delete → False
+    assert delete_task(b) is False
+    # Несуществующая → False
+    assert delete_task(999999) is False
+
+
+def test_db_deleted_task_excluded_from_all_views():
+    """Удалённая задача не должна вылезать ни в одном эндпоинте."""
+    from database import (
+        add_task,
+        add_to_myday,
+        bulk_update_tasks,
+        delete_task,
+        get_important_tasks,
+        get_myday,
+        get_planned,
+        get_tasks,
+        get_tasks_by_list,
+        search_tasks,
+        set_deadline,
+        set_important,
+        set_reminder_at,
+    )
+    tid = add_task(3001, "ghost")
+    set_important(tid, True)
+    set_deadline(tid, "2026-12-31 23:00:00")
+    set_reminder_at(tid, "2026-12-31 22:00:00")
+    add_to_myday(tid, "2026-05-21")
+    delete_task(tid)
+    assert get_tasks(3001) == []
+    assert get_tasks_by_list(3001, None) == []
+    assert get_myday(3001, "2026-05-21") == []
+    assert get_planned(3001) == []
+    assert get_important_tasks(3001) == []
+    assert search_tasks(3001, "ghost") == []
+    # bulk тоже не трогает (фильтр deleted_at IS NULL)
+    assert bulk_update_tasks(3001, [tid], "star") == 0
+
+
+def test_db_restore_task_brings_it_back():
+    from database import (
+        add_task,
+        delete_task,
+        get_tasks,
+        restore_task,
+    )
+    tid = add_task(3002, "phoenix")
+    delete_task(tid)
+    assert get_tasks(3002) == []
+    assert restore_task(tid) is True
+    assert [t["id"] for t in get_tasks(3002)] == [tid]
+    # Повторный restore — False
+    assert restore_task(tid) is False
+    # Несуществующая
+    assert restore_task(999999) is False
+
+
+def test_db_purge_deleted_tasks_after_window():
+    from database import (
+        add_task,
+        delete_task,
+        get_connection,
+        get_task,
+        purge_deleted_tasks,
+    )
+    fresh = add_task(3003, "fresh")
+    old = add_task(3003, "old")
+    delete_task(fresh)
+    delete_task(old)
+    # Сдвигаем deleted_at у `old` в прошлое.
+    conn = get_connection()
+    conn.execute(
+        "UPDATE tasks SET deleted_at = datetime('now', '-2 days') "
+        "WHERE id = ?", (old,)
+    )
+    conn.commit()
+    conn.close()
+    n = purge_deleted_tasks(older_than_hours=24)
+    assert n == 1
+    assert get_task(old) is None         # реально удалена
+    assert get_task(fresh) is not None   # ещё в окне отмены
+    # Повторный purge — 0
+    assert purge_deleted_tasks(older_than_hours=24) == 0
+
+
+def test_api_delete_restore_task(client):
+    tid = client.post(
+        "/api/tasks", json={"description": "doomed"}, headers=hdr()
+    ).json()["id"]
+    # Чужой DELETE → 404
+    assert client.request(
+        "DELETE", f"/api/tasks/{tid}", headers=hdr(99)
+    ).status_code == 404
+    # Свой DELETE → 200, исчезла из /api/tasks
+    assert client.request(
+        "DELETE", f"/api/tasks/{tid}", headers=hdr()
+    ).json() == {"ok": True}
+    assert client.get("/api/tasks", headers=hdr()).json() == []
+    # Restore: чужой → 404, свой → 200, появилась
+    assert client.post(
+        f"/api/tasks/{tid}/restore", headers=hdr(99)
+    ).status_code == 404
+    r = client.post(f"/api/tasks/{tid}/restore", headers=hdr())
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    assert [t["id"] for t in client.get(
+        "/api/tasks", headers=hdr()).json()] == [tid]
+    # Restore активной (уже не удалённой) → 404
+    assert client.post(
+        f"/api/tasks/{tid}/restore", headers=hdr()
+    ).status_code == 404
+
+
+def test_api_patch_blocked_on_deleted_task(client):
+    """После DELETE задача недоступна для PATCH/complete — 404."""
+    tid = client.post(
+        "/api/tasks", json={"description": "x"}, headers=hdr()
+    ).json()["id"]
+    client.request("DELETE", f"/api/tasks/{tid}", headers=hdr())
+    assert client.patch(
+        f"/api/tasks/{tid}", json={"important": True}, headers=hdr()
+    ).status_code == 404
+    assert client.post(
+        f"/api/tasks/{tid}/complete", headers=hdr()
+    ).status_code == 404

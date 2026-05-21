@@ -34,6 +34,7 @@ from database import (
     delete_list,
     delete_note,
     delete_step,
+    delete_task,
     export_user_data,
     get_global_counts,
     get_important_tasks,
@@ -62,6 +63,7 @@ from database import (
     reorder_task,
     restore_list,
     restore_note,
+    restore_task,
     search_notes,
     search_tasks,
     set_deadline,
@@ -201,9 +203,19 @@ def _decorate(
     return task
 
 
-def _require_own_task(user_id: int, task_id: int) -> dict:
+def _require_own_task(
+    user_id: int, task_id: int, *, include_deleted: bool = False
+) -> dict:
+    """
+    Phase 11.10: с soft-delete задач хелпер прячет удалённые от
+    обычных эндпоинтов (PATCH/complete/snooze/...) — иначе клиент
+    мог бы редактировать «удалённую» задачу из старого кеша. Только
+    `delete_task` и `restore_task` достают её через прямой `get_task`.
+    """
     task = get_task(task_id)
     if task is None or task["user_id"] != user_id:
+        raise HTTPException(status_code=404, detail="task not found")
+    if not include_deleted and task.get("deleted_at"):
         raise HTTPException(status_code=404, detail="task not found")
     return task
 
@@ -402,6 +414,36 @@ async def api_uncomplete(
 ) -> dict:
     _require_own_task(user_id, task_id)
     return {"ok": mark_task_undone(task_id)}
+
+
+@app.delete("/api/tasks/{task_id}")
+async def api_delete_task(
+    task_id: int, user_id: int = Depends(current_user_id)
+) -> dict:
+    """
+    Phase 11.10: soft-delete задачи. Через 24 ч `scheduler` физически
+    удалит её (вместе с подзадачами по FK CASCADE).
+    """
+    _require_own_task(user_id, task_id)
+    return {"ok": delete_task(task_id)}
+
+
+@app.post("/api/tasks/{task_id}/restore")
+async def api_restore_task(
+    task_id: int, user_id: int = Depends(current_user_id)
+) -> dict:
+    """
+    Phase 11.10: восстанавливает soft-deleted задачу. `_require_own_
+    task` отвергает чужую И активную (там нет `deleted_at`). Поэтому
+    проверяем через `get_task` напрямую, как в restore_note/_list.
+    """
+    task = get_task(task_id)
+    if task is None or task["user_id"] != user_id:
+        raise HTTPException(status_code=404, detail="task not found")
+    if not task.get("deleted_at"):
+        raise HTTPException(status_code=404, detail="task is not deleted")
+    restore_task(task_id)
+    return {"ok": True}
 
 
 @app.patch("/api/tasks/{task_id}")

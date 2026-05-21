@@ -87,6 +87,8 @@
   .f-cust .wd{display:flex;flex-wrap:wrap;gap:6px}
   .f-cust .wd label{font-size:12px}
   .pbtns{display:flex;gap:8px;flex-wrap:wrap}
+  .pbtns button.danger{color:#dc2626}
+  .pbtns button.danger:hover{background:rgba(220,38,38,.1)}
   .muted{color:var(--hint);text-align:center;padding:30px 16px}
   .modal-back{position:fixed;inset:0;background:rgba(0,0,0,.55);
     display:flex;align-items:center;justify-content:center;z-index:9999;
@@ -959,6 +961,7 @@ function row(t){
         ${t.note_id
           ? '<button class="ghost" data-act="clr-note">Отвязать</button>'
           : ''}
+        <button class="ghost danger" data-act="del-task" title="Удалить задачу">🗑 Удалить</button>
       </div>
     </div>`;
   const meta = [];
@@ -1180,6 +1183,21 @@ function row(t){
       await api(`/tasks/${t.id}`, {method:"PATCH",
         body: JSON.stringify({clear_note: true})});
       load();
+    } else if (act === "del-task") {
+      // Phase 11.10: soft-delete + undo (8 сек). Описание задачи —
+      // в тосте, чтобы было понятно, что именно удалено.
+      await api(`/tasks/${t.id}`, {method:"DELETE"});
+      load();
+      const preview = (t.description || "").slice(0, 50);
+      uiUndoToast(
+        `Задача удалена: «${preview}»`,
+        async () => {
+          await api(`/tasks/${t.id}/restore`, {method:"POST"});
+          load();
+          uiToast("Задача восстановлена", "ok");
+        },
+        8000,
+      );
     }
   });
   return li;
