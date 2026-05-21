@@ -2135,3 +2135,85 @@ def test_api_bulk_endpoint(client):
         json={"ids": [a], "action": "drop_table"}, headers=hdr(),
     )
     assert bad.status_code == 422
+
+
+# --- Phase 11.6: task ↔ note linking ---
+
+def test_db_set_task_note_and_query_linked():
+    from database import (
+        add_note,
+        add_task,
+        get_task,
+        get_tasks_linked_to_note,
+        set_task_note,
+    )
+    nid = add_note(2000, "memo")
+    a = add_task(2000, "ref this")
+    b = add_task(2000, "ref this too")
+    add_task(2000, "unrelated")
+    assert set_task_note(a, nid) is True
+    assert set_task_note(b, nid) is True
+    assert get_task(a)["note_id"] == nid
+    assert {t["id"] for t in get_tasks_linked_to_note(2000, nid)} == {a, b}
+    assert set_task_note(a, None) is True
+    assert get_task(a)["note_id"] is None
+    assert [t["id"] for t in get_tasks_linked_to_note(2000, nid)] == [b]
+    assert set_task_note(999999, nid) is False
+    assert get_tasks_linked_to_note(2001, nid) == []
+
+
+def test_db_get_tasks_linked_excludes_completed():
+    from database import (
+        add_note,
+        add_task,
+        complete_task,
+        get_tasks_linked_to_note,
+        set_task_note,
+    )
+    nid = add_note(2002, "memo")
+    a = add_task(2002, "todo")
+    b = add_task(2002, "done")
+    set_task_note(a, nid)
+    set_task_note(b, nid)
+    complete_task(b)
+    assert [t["id"] for t in get_tasks_linked_to_note(2002, nid)] == [a]
+
+
+def test_api_patch_task_with_note_id(client):
+    nid = client.post(
+        "/api/notes", json={"body": "memo"}, headers=hdr()
+    ).json()["id"]
+    tid = client.post(
+        "/api/tasks", json={"description": "x"}, headers=hdr()
+    ).json()["id"]
+    r = client.patch(
+        f"/api/tasks/{tid}", json={"note_id": nid}, headers=hdr()
+    )
+    assert r.status_code == 200 and r.json()["note_id"] == nid
+    foreign = client.post(
+        "/api/notes", json={"body": "their"}, headers=hdr(99)
+    ).json()["id"]
+    assert client.patch(
+        f"/api/tasks/{tid}", json={"note_id": foreign}, headers=hdr()
+    ).status_code == 404
+    r3 = client.patch(
+        f"/api/tasks/{tid}", json={"clear_note": True}, headers=hdr()
+    )
+    assert r3.status_code == 200 and r3.json()["note_id"] is None
+
+
+def test_api_note_tasks_endpoint(client):
+    nid = client.post(
+        "/api/notes", json={"body": "memo"}, headers=hdr()
+    ).json()["id"]
+    a = client.post(
+        "/api/tasks", json={"description": "linked"}, headers=hdr()
+    ).json()["id"]
+    client.patch(
+        f"/api/tasks/{a}", json={"note_id": nid}, headers=hdr()
+    )
+    body = client.get(f"/api/notes/{nid}/tasks", headers=hdr()).json()
+    assert len(body) == 1 and body[0]["id"] == a
+    assert client.get(
+        f"/api/notes/{nid}/tasks", headers=hdr(99)
+    ).status_code == 404

@@ -47,6 +47,7 @@ from database import (
     get_task,
     get_tasks,
     get_tasks_by_list,
+    get_tasks_linked_to_note,
     get_timezone,
     get_user_stats,
     import_user_data,
@@ -69,6 +70,7 @@ from database import (
     set_note,
     set_recurrence,
     set_reminder_at,
+    set_task_note,
     set_timezone,
     snooze_reminder,
     update_note,
@@ -223,6 +225,9 @@ class TaskPatch(BaseModel):
     clear_recurrence: bool = False
     notes: str | None = None
     clear_notes: bool = False
+    # Phase 11.6: ссылка на отдельную заметку.
+    note_id: int | None = None
+    clear_note: bool = False
 
 
 class ListCreate(BaseModel):
@@ -428,6 +433,14 @@ async def api_patch_task(
         set_note(task_id, None)
     elif body.notes is not None:
         set_note(task_id, body.notes)
+    # Phase 11.6: привязка к заметке. None в `note_id` без `clear_note`
+    # = «не трогать» (Pydantic-семантика; default None).
+    if body.clear_note:
+        set_task_note(task_id, None)
+    elif body.note_id is not None:
+        # Заметка должна быть своя и не удалённая.
+        _require_own_note(user_id, body.note_id)
+        set_task_note(task_id, body.note_id)
     return _decorate(get_task(task_id), _now_utc())
 
 
@@ -749,6 +762,15 @@ async def api_restore_note(
         raise HTTPException(status_code=404, detail="note is not deleted")
     restore_note(note_id)
     return {"ok": True}
+
+
+@app.get("/api/notes/{note_id}/tasks")
+async def api_note_tasks(
+    note_id: int, user_id: int = Depends(current_user_id),
+) -> list[dict]:
+    """Phase 11.6: список активных задач, привязанных к заметке."""
+    _require_own_note(user_id, note_id)
+    return get_tasks_linked_to_note(user_id, note_id)
 
 
 @app.post("/api/tasks/{task_id}/list")
