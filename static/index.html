@@ -18,6 +18,13 @@
   *{box-sizing:border-box}
   body{margin:0;font:15px/1.4 -apple-system,system-ui,sans-serif;
        background:var(--bg);color:var(--text)}
+  /* Phase 11.8: на десктопе центрируем содержимое в комфортной ширине,
+     иначе на широких мониторах список «растягивается» через весь экран
+     и читать неудобно. На мобиле ширину не ограничиваем. */
+  body.is-desktop{max-width:760px;margin-left:auto;margin-right:auto;
+    box-shadow:0 0 0 1px var(--card)}
+  .fs-btn{font-size:16px;padding:4px 8px;line-height:1}
+  body.is-mobile .fs-btn{display:none}
   header{padding:14px 16px 6px;font-size:22px;font-weight:700;
     display:flex;align-items:center;gap:12px}
   header h1{flex:1;margin:0;font-size:inherit;font-weight:inherit}
@@ -182,6 +189,8 @@
 <header>
   <h1 id="appTitle">Мои задачи</h1>
   <div id="statsBadge" class="stats-badge" hidden title="Статистика">…</div>
+  <!-- Phase 11.8: кнопка появляется только на десктопе (через JS). -->
+  <button id="fsBtn" class="ghost fs-btn" hidden title="На весь экран">⛶</button>
 </header>
 
 <!-- Phase 11.2: переключатель разделов «Задачи / Заметки» -->
@@ -258,28 +267,66 @@
 <script>
 const tg = window.Telegram ? window.Telegram.WebApp : null;
 
-// Phase 11.3: режим окна — fullscreen на десктопе, маленькое окно на мобиле.
-// Telegram WebApp.platform: 'tdesktop'/'macos'/'web'/'weba'/'webk' — десктоп;
-// 'android'/'ios' — мобайл; 'unknown' — на всякий считаем мобайлом.
+// Phase 11.3/11.8: режим окна — широкое на десктопе, компактное на мобиле.
+// Telegram WebApp.platform: 'tdesktop'/'macos'/'web'/'weba'/'webk'/'windows'
+// /'linux' — десктоп; 'android'/'ios' — мобайл; 'unknown' — мобайл по умолч.
+const DESKTOP_PLATFORMS = new Set(
+  ["tdesktop", "macos", "web", "weba", "webk", "windows", "linux"]
+);
+const IS_DESKTOP = tg
+  ? DESKTOP_PLATFORMS.has((tg.platform || "").toLowerCase())
+  : false;
+
 function _setupWindowMode() {
   if (!tg) return;
   tg.ready();
-  const desktopPlatforms = new Set(
-    ["tdesktop","macos","web","weba","webk","windows","linux"]
-  );
-  const isDesktop = desktopPlatforms.has((tg.platform || "").toLowerCase());
-  if (isDesktop) {
+  // Body-classes для CSS-хуков (Phase 11.8).
+  document.body.classList.add(IS_DESKTOP ? "is-desktop" : "is-mobile");
+
+  if (IS_DESKTOP) {
+    // 1) Вертикальный expand — забираем всю доступную высоту окна Mini App.
     tg.expand();
-    // Bot API 8.0+: настоящий fullscreen режим (десктоп). Если не
-    // поддерживается клиентом, метод просто не существует — игнор.
+    // 2) requestFullscreen (Bot API 8.0+). На автозапуске без user-gesture
+    //    клиенты обычно отказывают, но попытка обходится дёшево.
+    //    Дополнительно прикручиваем кнопку ⛶, которая дёрнет API уже с
+    //    реальным кликом — это работает гарантированно.
     try {
       if (typeof tg.requestFullscreen === "function") tg.requestFullscreen();
     } catch { /* старые клиенты — ничего страшного */ }
   }
-  // На мобиле НЕ зовём expand() — пользователь сам свайпом расширит,
-  // как просили: «маленькое окно на мобильном устройстве».
+  // На мобиле expand() НЕ зовём — там Mini App открывается в компактной
+  // панели, пользователь сам свайпом расширит.
+
+  // Диагностика — в console видно, что и почему. Если жалоба «окно
+  // маленькое на ПК», тут будет правда: platform, viewport_height,
+  // is_expanded.
+  try {
+    console.log("[mini-app] platform=%s desktop=%s viewport=%s expanded=%s",
+      tg.platform, IS_DESKTOP, tg.viewportHeight, tg.isExpanded);
+  } catch { /* SDK без этих полей — нет проблем */ }
 }
 _setupWindowMode();
+
+// Phase 11.8: ручной триггер fullscreen — нужен user-gesture, поэтому
+// показываем кнопку в шапке и навешиваем onclick. Только на десктопе.
+function _setupFullscreenButton() {
+  if (!tg || !IS_DESKTOP) return;
+  const btn = document.getElementById("fsBtn");
+  if (!btn) return;
+  btn.hidden = false;
+  btn.onclick = () => {
+    try {
+      tg.expand();
+      if (tg.isFullscreen && typeof tg.exitFullscreen === "function") {
+        tg.exitFullscreen();
+      } else if (typeof tg.requestFullscreen === "function") {
+        tg.requestFullscreen();
+      }
+    } catch (e) {
+      uiToast("Полноэкранный режим недоступен в этом клиенте");
+    }
+  };
+}
 
 // initData читаем КАЖДЫЙ раз, а не один раз при загрузке: некоторые
 // клиенты Telegram дозаполняют поле после `ready()` или после первого
@@ -1556,6 +1603,9 @@ function openNoteEditor(note) {
   if (_UI.showDone) $("#showDone").checked = true;
   // listId уже инициализирован из _UI; loadLists() сам выставит value.
 })();
+
+// Phase 11.8: кнопка ⛶ навешивается, когда DOM готов и шапка отрисована.
+_setupFullscreenButton();
 
 (async () => {
   try {
