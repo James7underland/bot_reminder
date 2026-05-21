@@ -2356,3 +2356,49 @@ def test_api_patch_blocked_on_deleted_task(client):
     assert client.post(
         f"/api/tasks/{tid}/complete", headers=hdr()
     ).status_code == 404
+
+
+# --- Phase 11.11: архив выполненных + меню команд бота ---
+
+def test_db_get_archived_tasks_newest_first():
+    from database import (
+        add_task,
+        complete_task,
+        delete_task,
+        get_archived_tasks,
+    )
+    a = add_task(4000, "first done")
+    b = add_task(4000, "later done")
+    c = add_task(4000, "active")
+    deleted = add_task(4000, "deleted done")
+    complete_task(a)
+    complete_task(b)
+    complete_task(deleted)
+    delete_task(deleted)            # выполнено + удалено → не в архиве
+    archive = get_archived_tasks(4000)
+    # `c` активная → не в архиве; `deleted` удалена → не в архиве.
+    # `b` завершилась позже → её id больше → выше.
+    assert [t["id"] for t in archive] == [b, a]
+    assert c not in [t["id"] for t in archive]
+
+
+def test_db_get_archived_tasks_user_isolated():
+    from database import add_task, complete_task, get_archived_tasks
+    a = add_task(4001, "x")
+    complete_task(a)
+    # Другой пользователь — ничего не видит.
+    assert get_archived_tasks(4002) == []
+
+
+def test_api_archive_endpoint(client):
+    a = client.post("/api/tasks", json={"description": "todo"},
+                    headers=hdr()).json()["id"]
+    b = client.post("/api/tasks", json={"description": "done"},
+                    headers=hdr()).json()["id"]
+    client.post(f"/api/tasks/{b}/complete", headers=hdr())
+    # Архив содержит только выполненную, новейшую сверху.
+    archive = client.get("/api/archive", headers=hdr()).json()
+    assert [t["id"] for t in archive] == [b]
+    assert a not in [t["id"] for t in archive]
+    # 401 без авторизации
+    assert client.get("/api/archive").status_code == 401

@@ -36,6 +36,7 @@ from database import (
     delete_step,
     delete_task,
     export_user_data,
+    get_archived_tasks,
     get_global_counts,
     get_important_tasks,
     get_lists,
@@ -557,6 +558,16 @@ async def api_important(
     now = _now_utc()
     counts = get_steps_counts(user_id)
     return [_decorate(t, now, counts) for t in get_important_tasks(user_id)]
+
+
+@app.get("/api/archive")
+async def api_archive(
+    user_id: int = Depends(current_user_id),
+) -> list[dict]:
+    """Phase 11.11: выполненные задачи (новейшие сверху)."""
+    now = _now_utc()
+    counts = get_steps_counts(user_id)
+    return [_decorate(t, now, counts) for t in get_archived_tasks(user_id)]
 
 
 @app.post("/api/tasks/{task_id}/myday")

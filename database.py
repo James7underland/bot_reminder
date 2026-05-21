@@ -1076,6 +1076,26 @@ def get_important_tasks(user_id: int) -> list[dict]:
     return _rows_to_tasks(rows)
 
 
+def get_archived_tasks(user_id: int) -> list[dict]:
+    """
+    Phase 11.11: выполненные задачи пользователя (архив). Самые недавние
+    сверху — у нас нет `completed_at`, поэтому сортируем по `id DESC`:
+    `id` монотонный и приближённо отражает порядок завершения.
+    """
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM tasks WHERE user_id = ? AND completed = 1 "
+        "AND deleted_at IS NULL "
+        "ORDER BY id DESC",
+        (user_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return _rows_to_tasks(rows)
+
+
 # --- Поиск и гибкие напоминания (Фаза 5.7) ---
 
 def search_tasks(user_id: int, query: str) -> list[dict]:

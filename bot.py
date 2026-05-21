@@ -12,6 +12,7 @@
 import logging
 
 from telegram import (
+    BotCommand,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     MenuButtonWebApp,
@@ -231,6 +232,22 @@ async def reminder_callback(
 
 # --- Запуск (исключён из coverage, требует Telegram-сети) ---
 
+# Phase 11.11: команды, которые Telegram показывает в `/`-автокомплите.
+_BOT_COMMANDS = [
+    BotCommand("start", "Открыть Mini App"),
+    BotCommand("help", "Что умеет бот"),
+]
+
+
+async def _set_my_commands(application) -> None:  # pragma: no cover
+    """`post_init`-хук: регистрирует список команд в Telegram, чтобы
+    их видно было в меню «/» в чате. Не ломает запуск при ошибке."""
+    try:
+        await application.bot.set_my_commands(_BOT_COMMANDS)
+    except Exception as e:
+        logger.warning("set_my_commands failed: %s", e)
+
+
 def main() -> None:  # pragma: no cover
     """Запускает бота (сетевой polling — вне unit-тестов)."""
     if not TELEGRAM_BOT_TOKEN:
@@ -254,7 +271,14 @@ def main() -> None:  # pragma: no cover
     application.add_error_handler(error_handler)
 
     # Планировщик: напоминания + purge soft-deleted списков (Phase 10.7).
+    # setup_scheduler регистрирует post_init/post_shutdown — наш set_my_
+    # commands оборачиваем поверх существующего post_init.
     setup_scheduler(application)
+    _prev_post_init = application.post_init
+    async def _combined_post_init(app):
+        await _prev_post_init(app)
+        await _set_my_commands(app)
+    application.post_init = _combined_post_init
 
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
