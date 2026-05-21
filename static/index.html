@@ -753,6 +753,26 @@ function _setupFullscreenButton() {
         "fullscreen — обнови Telegram Desktop до 11.5+. Диагностика: " +
         tries.join(" · "),
       );
+      // Phase 11.21: полная диагностика через нативный showAlert —
+      // он точно отобразится, и пользователь сможет переслать её мне.
+      // `document.fullscreenEnabled === false` = iframe без
+      // allow="fullscreen" (политика самого Telegram, не наша).
+      const diag =
+        "FULLSCREEN ДИАГНОСТИКА\n" +
+        "platform: " + (tg ? tg.platform : "no-tg") + "\n" +
+        "tg.version: " + (tg ? tg.version : "—") + "\n" +
+        "isVersionAtLeast 8.0: " +
+          (tg && tg.isVersionAtLeast ? tg.isVersionAtLeast("8.0") : "n/a") + "\n" +
+        "typeof requestFullscreen: " +
+          (tg ? typeof tg.requestFullscreen : "—") + "\n" +
+        "tg.isFullscreen: " + (tg ? tg.isFullscreen : "—") + "\n" +
+        "browser fs supported: " + _browserFsSupported() + "\n" +
+        "document.fullscreenEnabled: " + document.fullscreenEnabled + "\n" +
+        "viewport: " + window.innerWidth + "×" + window.innerHeight +
+          " (tg vh=" + (tg ? tg.viewportHeight : "—") + ")\n" +
+        "tries: " + tries.join(" | ");
+      console.log("[mini-app] " + diag);
+      uiAlert(diag);
     }
     setTimeout(_updateFsButton, 100);
   };
