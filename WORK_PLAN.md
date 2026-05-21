@@ -593,6 +593,16 @@ Mini App» + «Нужно добавить раздел с заметками (�
   вырезаны handler-тесты — DB-слой остаётся, пользовательские сценарии
   живут в `test_webapp.py`. Планировщик (рассылка напоминаний и
   purge soft-deleted) сохранён. 196 тестов, TOTAL 99.30%.
+- **11.5 ✅ (PR #48):** Markdown в теле заметок. Hand-rolled
+  `mdToHtml(raw)` без зависимостей. Поддержка: `**bold**` /
+  `__bold__`, `*italic*` / `_italic_`, `` `inline code` ``,
+  `[text](url)` (только http(s)/tg/mailto/relative — иначе текстом),
+  авто-ссылки на http(s)/tg-URL, чек-листы `- [ ]` / `- [x]`,
+  переносы строк. Безопасность: вся входная строка эскейпится через
+  `esc()` ДО парсинга, ссылки кладутся в стэш с маркером U+0001 —
+  следующие шаги (bold/italic) не повреждают их содержимое. Frontend-
+  only; в редакторе остаётся raw-textarea (нет live preview, минимум
+  кода). 230 тестов остаются зелёными.
 - **11.4 ✅ (PR #47):** Bulk-actions для задач. БД: `bulk_update_tasks
   (user_id, ids, action, list_id=None)` — фильтрует id по user_id
   (защита от чужих), `_BULK_ACTIONS` = `complete|uncomplete|star|
