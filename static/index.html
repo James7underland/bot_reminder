@@ -165,7 +165,9 @@
     font-family:ui-monospace,Menlo,monospace;font-size:.92em}
   .md b{font-weight:700}
   .md i{font-style:italic}
-  .md .md-cb{display:inline-block;width:1em;color:#111}
+  .md .md-cb{display:inline-block;width:1em;color:#111;cursor:pointer;
+    user-select:none;font-size:1.05em}
+  .md .md-cb:hover{transform:scale(1.15)}
   .md .md-cb-on{color:#16a34a}
   .md .md-done{text-decoration:line-through;opacity:.6}
   .note .nmeta{font-size:11px;color:var(--hint);margin-top:auto}
@@ -1415,11 +1417,21 @@ function mdToHtml(raw) {
   if (!raw) return "";
   // 1) Экранируем всю строку целиком — никаких сюрпризов от пользователя.
   let s = esc(raw);
-  // 2) Чек-лист `- [ ] xxx` / `- [x] xxx` (в начале строки).
-  s = s.replace(/^(\s*)- \[ \] (.*)$/gm,
-    '$1<span class="md-cb">☐</span> $2');
-  s = s.replace(/^(\s*)- \[(x|X)\] (.*)$/gm,
-    '$1<span class="md-cb md-cb-on">☑</span> <span class="md-done">$3</span>');
+  // 2) Чек-листы `- [ ] …` / `- [x] …`. Один общий regex; присваиваем
+  //    каждому чек-боксу последовательный `data-cb` (Phase 11.9) — по
+  //    нему JS-обработчик найдёт и перевернёт нужную строку в исходном
+  //    `raw`.
+  let cbIdx = -1;
+  s = s.replace(/^(\s*)- \[([ xX])\] (.*)$/gm, (_m, sp, state, rest) => {
+    cbIdx++;
+    const checked = state.toLowerCase() === "x";
+    const cls = "md-cb" + (checked ? " md-cb-on" : "");
+    const icon = checked ? "☑" : "☐";
+    const body = checked
+      ? `<span class="md-done">${rest}</span>`
+      : rest;
+    return `${sp}<span class="${cls}" data-cb="${cbIdx}">${icon}</span> ${body}`;
+  });
   // 3) Inline code `…` — раньше других, чтобы внутри не парсилось.
   s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
   // 4) [text](url) — только безопасные схемы.
@@ -1455,6 +1467,24 @@ function mdToHtml(raw) {
   return s;
 }
 
+// Phase 11.9: переключает `cbIdx`-й чек-бокс в `body`. Возвращает
+// новое тело или null, если такого чек-бокса нет (рассинхрон рендера).
+function toggleNoteCheckboxLine(body, cbIdx) {
+  let count = 0;
+  const lines = String(body || "").split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^(\s*- \[)([ xX])(\] .*)$/);
+    if (!m) continue;
+    if (count === cbIdx) {
+      const next = m[2].toLowerCase() === "x" ? " " : "x";
+      lines[i] = m[1] + next + m[3];
+      return lines.join("\n");
+    }
+    count++;
+  }
+  return null;
+}
+
 function noteCard(n) {
   const li = document.createElement("li");
   li.className = "note" + (n.pinned ? " pinned" : "");
@@ -1466,7 +1496,28 @@ function noteCard(n) {
     + (n.title ? `<div class="ntitle">${esc(n.title)}</div>` : '')
     + `<div class="nbody md">${mdToHtml(n.body)}</div>`
     + `<div class="nmeta">${shortDate(n.updated_at || n.created_at)}</div>`;
-  li.onclick = () => openNoteEditor(n);
+  li.onclick = (e) => {
+    // Phase 11.9: клик по чек-боксу → toggle прямо из карточки,
+    // редактор НЕ открываем. Любой другой клик — открыть редактор.
+    const cb = e.target && e.target.closest && e.target.closest(".md-cb");
+    if (cb && cb.dataset.cb != null) {
+      e.stopPropagation();
+      const idx = parseInt(cb.dataset.cb, 10);
+      const next = toggleNoteCheckboxLine(n.body, idx);
+      if (next == null) return;
+      // Оптимистично: обновляем содержимое в state + перерисуем карточку.
+      n.body = next;
+      // Обновляем DOM без перезагрузки всей сетки — быстро и без мерцания.
+      const md = li.querySelector(".nbody.md");
+      if (md) md.innerHTML = mdToHtml(next);
+      // Сохраняем на сервер; на ошибке — load() синхронизирует.
+      api(`/notes/${n.id}`, {method:"PATCH",
+        body: JSON.stringify({body: next}), _silent: true})
+        .catch(() => loadNotes());
+      return;
+    }
+    openNoteEditor(n);
+  };
   return li;
 }
 
