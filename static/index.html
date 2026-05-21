@@ -29,6 +29,11 @@
     border-radius:8px;transition:background .15s}
   .icon-btn:hover{background:rgba(127,127,127,.12)}
   body.is-mobile .fs-btn{display:none}
+  /* Phase 11.15: CSS-pseudo-fullscreen — последний резерв, когда ни
+     tg.requestFullscreen, ни document.requestFullscreen не работают
+     (часто из-за iframe permissions policy в Telegram WebApp). */
+  body.pseudo-fs{position:fixed;inset:0;width:100vw;height:100vh;
+    z-index:9999;overflow-y:auto;background:var(--bg)}
 
   /* Сайдбар-drawer */
   .drawer{position:fixed;top:0;left:0;bottom:0;width:min(320px,80vw);
@@ -493,13 +498,29 @@ function _setupWindowMode() {
 }
 _setupWindowMode();
 
+// Phase 11.15: «псевдо-fullscreen» через CSS — последний резерв.
+// Если ни TG, ни браузерный API не сработали (часто из-за iframe
+// permissions policy), мы хотя бы максимизируем body внутри того окна,
+// что Telegram нам выдал. Это не настоящий fullscreen, но визуально
+// заполняет всё доступное место.
+let _pseudoFs = false;
+function _pseudoFsOn() {
+  document.body.classList.add("pseudo-fs");
+  _pseudoFs = true;
+}
+function _pseudoFsOff() {
+  document.body.classList.remove("pseudo-fs");
+  _pseudoFs = false;
+}
+
 function _updateFsButton() {
   const btn = document.getElementById("fsBtn");
   if (!btn || !IS_DESKTOP) return;
-  // На десктопе всегда показываем кнопку: она хоть и через
-  // браузерный API, но fullscreen сработает.
-  btn.hidden = !(_tgFsSupported() || _browserFsSupported());
-  const on = _isFullscreen();
+  // Phase 11.15: ВСЕГДА показываем на десктопе. Даже если все API
+  // отказали — есть CSS-pseudo-fs как fallback, а пользователь
+  // получит толковую диагностику.
+  btn.hidden = false;
+  const on = _isFullscreen() || _pseudoFs;
   btn.textContent = on ? "🗗" : "⛶";
   btn.title = on ? "Свернуть окно" : "Развернуть на весь экран";
 }
@@ -510,25 +531,80 @@ function _setupFullscreenButton() {
   if (!btn) return;
   _updateFsButton();
   btn.onclick = async () => {
-    if (_isFullscreen()) {
-      const ok = await _exitFullscreen();
-      if (!ok) uiToast("Не удалось выйти из fullscreen");
-    } else {
-      const ok = await _enterFullscreen();
-      if (!ok) {
-        uiToast("Полноэкранный режим недоступен. Попробуйте обновить Telegram.");
+    // Если сейчас «в развёрнутом» — сворачиваем (все три варианта).
+    if (_isFullscreen() || _pseudoFs) {
+      let exited = false;
+      if (_tgFsSupported() && tg.isFullscreen) {
+        try { tg.exitFullscreen(); exited = true; } catch {}
       }
+      if (_browserFsActive()) {
+        try {
+          if (document.exitFullscreen) await document.exitFullscreen();
+          else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+          exited = true;
+        } catch {}
+      }
+      if (_pseudoFs) { _pseudoFsOff(); exited = true; }
+      if (!exited) uiToast("Не удалось свернуть");
+      setTimeout(_updateFsButton, 200);
+      return;
     }
-    setTimeout(_updateFsButton, 200);
+
+    // Развёртывание: пробуем по очереди, собираем причины отказов
+    // в строку диагностики; ОДНА из попыток должна сработать.
+    const tries = [];
+
+    // 1) TG-нативный fullscreen.
+    if (_tgFsSupported()) {
+      try {
+        tg.requestFullscreen();
+        tries.push("tg → ok (ждём событие)");
+        // Telegram должен поднять `fullscreenChanged`. Если за 350 мс
+        // не поднял — считаем, что отказал, и идём дальше.
+        await new Promise(r => setTimeout(r, 350));
+        if (tg.isFullscreen) {
+          setTimeout(_updateFsButton, 100);
+          return;
+        }
+        tries[tries.length - 1] = "tg → ignored";
+      } catch (e) {
+        tries.push("tg → ex: " + (e.message || e));
+      }
+    } else {
+      tries.push("tg fs not supported (need TG 11.5+)");
+    }
+
+    // 2) Браузерный Fullscreen API.
+    if (_browserFsSupported()) {
+      try {
+        const el = document.documentElement;
+        const req = el.requestFullscreen || el.webkitRequestFullscreen;
+        await req.call(el);
+        tries.push("browser → ok");
+        setTimeout(_updateFsButton, 100);
+        return;
+      } catch (e) {
+        tries.push("browser → ex: " + (e.message || e));
+      }
+    } else {
+      tries.push("browser fs API absent");
+    }
+
+    // 3) CSS pseudo-fullscreen — гарантированно работает, но это
+    // максимизация ВНУТРИ окна Telegram (т.к. размер окна — за нами
+    // не контролируем).
+    _pseudoFsOn();
+    _updateFsButton();
+    uiToast(
+      "Fullscreen API недоступен; применён CSS-режим. Шаги:\n" +
+      tries.join("\n"),
+    );
   };
-  // События TG и браузера — обе синхронизируют иконку.
+
+  // Иконка синхронизируется с любым из трёх состояний.
   try {
     tg.onEvent("fullscreenChanged", _updateFsButton);
-    tg.onEvent("fullscreenFailed", () => {
-      // Не показываем тост на TG-провал — переходим на браузерный
-      // API при клике; в авто-режиме fail тихо игнорируем.
-      _updateFsButton();
-    });
+    tg.onEvent("fullscreenFailed", _updateFsButton);
   } catch { /* старый SDK */ }
   document.addEventListener("fullscreenchange", _updateFsButton);
   document.addEventListener("webkitfullscreenchange", _updateFsButton);
