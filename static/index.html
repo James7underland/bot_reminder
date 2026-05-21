@@ -26,8 +26,16 @@
   /* Phase 11.14: icon-buttons в шапке (≡ ⋯ ⛶) и drawer-навигация. */
   .icon-btn{background:transparent;border:none;color:var(--link);
     font-size:20px;line-height:1;padding:6px 10px;cursor:pointer;
-    border-radius:8px;transition:background .15s}
+    border-radius:8px;transition:background .15s;
+    display:inline-flex;align-items:center;justify-content:center;
+    min-width:36px;min-height:36px}
   .icon-btn:hover{background:rgba(127,127,127,.12)}
+  /* Phase 11.17: SVG-иконки наследуют currentColor от родительской
+     кнопки/тега. Размеры заданы атрибутами в _SVG(). */
+  .icon-btn svg, button svg, span[data-icon] svg{display:block;flex:none}
+  .drag-handle svg{opacity:.7}
+  .star svg{transition:transform .12s, fill .12s}
+  .star.on{color:#f5b301}
   body.is-mobile .fs-btn{display:none}
   /* Phase 11.15: CSS-pseudo-fullscreen — последний резерв, когда ни
      tg.requestFullscreen, ни document.requestFullscreen не работают
@@ -309,11 +317,11 @@
 </head>
 <body>
 <header>
-  <button id="navBtn" class="icon-btn" title="Меню">≡</button>
+  <button id="navBtn" class="icon-btn" title="Меню" data-icon="menu"></button>
   <h1 id="appTitle">Мои задачи</h1>
   <div id="statsBadge" class="stats-badge" hidden title="Статистика">…</div>
-  <button id="fsBtn" class="icon-btn" hidden title="На весь экран">⛶</button>
-  <button id="moreBtn" class="icon-btn" title="Ещё">⋯</button>
+  <button id="fsBtn" class="icon-btn" hidden title="На весь экран" data-icon="maximize"></button>
+  <button id="moreBtn" class="icon-btn" title="Ещё" data-icon="more"></button>
 </header>
 
 <!-- Phase 11.14: боковая панель навигации (drawer). По клику ≡
@@ -321,7 +329,7 @@
 <aside id="navDrawer" class="drawer" hidden>
   <div class="drawer-header">
     <span class="drawer-title">Навигация</span>
-    <button id="drawerClose" class="icon-btn" title="Закрыть">✕</button>
+    <button id="drawerClose" class="icon-btn" title="Закрыть" data-icon="x"></button>
   </div>
   <div class="drawer-section">
     <div class="drawer-label">Разделы</div>
@@ -339,7 +347,7 @@
   <div class="drawer-section nav-lists">
     <div class="drawer-label">
       Списки
-      <button id="drawerNewList" class="icon-btn" title="Создать список">+</button>
+      <button id="drawerNewList" class="icon-btn" title="Создать список" data-icon="plus"></button>
     </div>
     <div id="drawerListItems"></div>
   </div>
@@ -394,12 +402,12 @@
   <!-- Phase 11.4: панель действий для multi-select. Появляется
        над списком, когда selectMode=true. -->
   <div id="bulkBar" class="bulk-bar" hidden>
-    <button id="bulkCancel" class="ghost" title="Отмена">✕</button>
+    <button id="bulkCancel" class="ghost" title="Отмена" data-icon="x"></button>
     <span id="bulkCount">0 выбрано</span>
-    <button id="bulkDone" title="Отметить выполненными">✓</button>
-    <button id="bulkStar" title="Важные">★</button>
-    <button id="bulkUnstar" title="Снять «важно»">☆</button>
-    <button id="bulkMove" title="В список…">📁</button>
+    <button id="bulkDone" title="Отметить выполненными" data-icon="check"></button>
+    <button id="bulkStar" title="Важные" data-icon="star"></button>
+    <button id="bulkUnstar" title="Снять «важно»" data-icon="star-off"></button>
+    <button id="bulkMove" title="В список…" data-icon="folder"></button>
   </div>
   <ul id="list"></ul>
   <div id="empty" class="empty-state" hidden></div>
@@ -417,6 +425,49 @@
 </section>
 
 <script>
+// Phase 11.17: SVG-иконки в кнопках (заменяют эмодзи в местах, где
+// они выглядели «эмодзи-лень»). Lucide-стиль: stroke-based, 24px,
+// currentColor — наследуют цвет кнопки/темы автоматически.
+const _SVG = (path, viewBox = "0 0 24 24") =>
+  `<svg viewBox="${viewBox}" width="20" height="20" fill="none"
+     stroke="currentColor" stroke-width="2" stroke-linecap="round"
+     stroke-linejoin="round">${path}</svg>`;
+const ICONS = {
+  menu:     _SVG('<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>'),
+  more:     _SVG('<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>'),
+  x:        _SVG('<line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/>'),
+  check:    _SVG('<polyline points="20 6 9 17 4 12"/>'),
+  star:     _SVG('<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>'),
+  "star-fill": _SVG('<polygon fill="currentColor" stroke="currentColor" points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>'),
+  "star-off": _SVG('<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/><line x1="3" y1="3" x2="21" y2="21" stroke-width="2.5"/>'),
+  folder:   _SVG('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'),
+  grip:     _SVG('<circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/>'),
+  "chev-up":   _SVG('<polyline points="18 15 12 9 6 15"/>'),
+  "chev-down": _SVG('<polyline points="6 9 12 15 18 9"/>'),
+  maximize: _SVG('<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>'),
+  minimize: _SVG('<polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/>'),
+  pencil:   _SVG('<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>'),
+  palette:  _SVG('<circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.5 0 1-.4 1-1 0-.3-.1-.5-.3-.7-.3-.4-.5-.8-.5-1.3 0-1 .8-1.8 1.8-1.8H16c3.3 0 6-2.7 6-6 0-5-4.5-9-10-9z"/>'),
+  trash:    _SVG('<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>'),
+  plus:     _SVG('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>'),
+  search:   _SVG('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>'),
+};
+function applyIcons(root) {
+  (root || document).querySelectorAll("[data-icon]").forEach(el => {
+    const name = el.dataset.icon;
+    if (ICONS[name] && !el._iconApplied) {
+      el.innerHTML = ICONS[name];
+      el._iconApplied = name;
+    } else if (el._iconApplied !== name && ICONS[name]) {
+      el.innerHTML = ICONS[name];
+      el._iconApplied = name;
+    }
+  });
+}
+// Применяем сразу для статических элементов в шапке/drawer'е, а
+// динамические (row, noteCard) подключатся в своих рендерах.
+window.addEventListener("DOMContentLoaded", () => applyIcons());
+
 const tg = window.Telegram ? window.Telegram.WebApp : null;
 
 // Phase 11.3/11.8: режим окна — широкое на десктопе, компактное на мобиле.
@@ -534,12 +585,12 @@ function _pseudoFsOff() {
 function _updateFsButton() {
   const btn = document.getElementById("fsBtn");
   if (!btn || !IS_DESKTOP) return;
-  // Phase 11.15: ВСЕГДА показываем на десктопе. Даже если все API
-  // отказали — есть CSS-pseudo-fs как fallback, а пользователь
-  // получит толковую диагностику.
+  // Phase 11.15: ВСЕГДА показываем на десктопе.
   btn.hidden = false;
   const on = _isFullscreen() || _pseudoFs;
-  btn.textContent = on ? "🗗" : "⛶";
+  btn.dataset.icon = on ? "minimize" : "maximize";
+  btn._iconApplied = null;     // принудительно перерисуем SVG
+  applyIcons(btn.parentElement);
   btn.title = on ? "Свернуть окно" : "Развернуть на весь экран";
 }
 
@@ -974,6 +1025,7 @@ async function load(){
     emptyEl.hidden = true;
   }
   for (const t of tasks) ul.appendChild(row(t));
+  applyIcons(ul);   // Phase 11.17: подставляем SVG в data-icon
   // Drag-and-drop включаем только в режимах, где порядок реально
   // соответствует order_index — это «Все» (без поиска) и «по списку».
   // В smart-views (myday/planned/important) и при поиске список
@@ -1230,13 +1282,13 @@ function row(t){
   }
   li.innerHTML = `
     <div class="row">
-      <span class="drag-handle" title="Перетащить">⠿</span>
+      <span class="drag-handle" title="Перетащить" data-icon="grip"></span>
       <div class="chk ${t.completed?'done':''}" data-act="toggle"></div>
       <div class="ttl">${esc(t.description)}
         <div class="meta"></div></div>
-      <button class="ghost mv" data-act="mv-up" title="Выше">▲</button>
-      <button class="ghost mv" data-act="mv-down" title="Ниже">▼</button>
-      <button class="star ${t.important?'on':''}" data-act="star">★</button>
+      <button class="ghost mv" data-act="mv-up" title="Выше" data-icon="chev-up"></button>
+      <button class="ghost mv" data-act="mv-down" title="Ниже" data-icon="chev-down"></button>
+      <button class="star ${t.important?'on':''}" data-act="star" data-icon="star${t.important?'-fill':''}"></button>
     </div>
     <div class="panel">
       <label>Описание<input class="f-desc" value="${esc(t.description)}"></label>
@@ -1828,9 +1880,9 @@ function renderDrawerLists() {
       + `</span>`
       + (/^\d+$/.test(it.id) && it.id !== "0"
         ? `<span class="list-actions">
-             <button data-list-act="ren" title="Переименовать">✎</button>
-             <button data-list-act="clr" title="Цвет">🎨</button>
-             <button data-list-act="del" title="Удалить">🗑</button>
+             <button data-list-act="ren" title="Переименовать" data-icon="pencil"></button>
+             <button data-list-act="clr" title="Цвет" data-icon="palette"></button>
+             <button data-list-act="del" title="Удалить" data-icon="trash"></button>
            </span>`
         : "");
     row.addEventListener("click", (e) => {
@@ -1855,6 +1907,7 @@ function renderDrawerLists() {
     });
     box.appendChild(row);
   }
+  applyIcons(box);   // Phase 11.17: SVG для ✎/🎨/🗑 hover-кнопок
 }
 
 // «+» возле заголовка «Списки» в drawer'е — создаёт новый список через
