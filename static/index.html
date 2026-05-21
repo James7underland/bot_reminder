@@ -854,6 +854,11 @@ function row(t){
           t.myday_date ? 'Убрать из «Мой день»' : 'В «Мой день»'}</button>
         <button class="ghost" data-act="clr-dl">Убрать срок</button>
         <button class="ghost" data-act="clr-rm">Убрать напом.</button>
+        <button class="ghost" data-act="pick-note">${
+          t.note_id ? '📓 Заметка ✓' : '📓 Прикрепить заметку'}</button>
+        ${t.note_id
+          ? '<button class="ghost" data-act="clr-note">Отвязать</button>'
+          : ''}
       </div>
     </div>`;
   const meta = [];
@@ -863,6 +868,7 @@ function row(t){
   if (t.recurrence) meta.push("повтор: " + t.recurrence);
   if (t.myday_date) meta.push("в «Мой день»");
   if (t.steps_total) meta.push("📋 " + t.steps_done + "/" + t.steps_total);
+  if (t.note_id) meta.push("📓 заметка");
   $(".meta", li).textContent = meta.join(" · ");
   $(".f-dl", li).value = toInput(t.deadline);
   $(".f-rm", li).value = toInput(t.reminder_at);
@@ -1040,6 +1046,29 @@ function row(t){
       load();
     } else if (act === "mv-down") {
       await api(`/tasks/${t.id}/move-down`, {method:"POST"});
+      load();
+    } else if (act === "pick-note") {
+      // Phase 11.6: выбираем заметку из текущих (фильтруем soft-deleted
+      // на бэкенде через GET /api/notes — он уже их прячет).
+      const notes = await api("/notes");
+      if (!notes.length) {
+        await uiAlert("Заметок ещё нет. Создайте заметку в разделе 📓 Заметки.");
+        return;
+      }
+      const opts = notes.map(n => ({
+        value: String(n.id),
+        label: (n.title || n.body || "(без названия)").slice(0, 80),
+      }));
+      const picked = await uiSelect(
+        "Прикрепить заметку", opts, t.note_id ? String(t.note_id) : null
+      );
+      if (picked === null) return;
+      await api(`/tasks/${t.id}`, {method:"PATCH",
+        body: JSON.stringify({note_id: parseInt(picked, 10)})});
+      load();
+    } else if (act === "clr-note") {
+      await api(`/tasks/${t.id}`, {method:"PATCH",
+        body: JSON.stringify({clear_note: true})});
       load();
     }
   });
@@ -1367,12 +1396,27 @@ function openNoteEditor(note) {
          <button class="ghost" data-act="pin">${cur.pinned ? "Открепить" : "Закрепить"}</button>
          ${isNew ? "" : '<button class="ghost" data-act="del">🗑 Удалить</button>'}
        </div>
+       ${isNew ? "" : '<div class="note-linked" style="color:var(--hint);font-size:12px"></div>'}
        <div class="modal-btns">
          <button class="ghost modal-cancel">Отмена</button>
          <button class="modal-ok">${isNew ? "Создать" : "Сохранить"}</button>
        </div>
      </div>`;
   document.body.appendChild(back);
+  // Phase 11.6: подгружаем список связанных задач (только для уже
+  // существующей заметки). Лениво, не блокируем рендер модала.
+  if (!isNew) {
+    api(`/notes/${note.id}/tasks`, {_silent: true}).then(tasks => {
+      if (!Array.isArray(tasks) || !tasks.length) return;
+      const div = back.querySelector(".note-linked");
+      if (!div) return;
+      const names = tasks.map(t =>
+        (t.important ? "★ " : "") +
+        String(t.description).slice(0, 60)
+      ).join(" · ");
+      div.textContent = `🔗 связано с задачами (${tasks.length}): ${names}`;
+    }).catch(() => {});
+  }
   const tIn = back.querySelector(".modal-title-input");
   const bIn = back.querySelector(".modal-body-input");
   tIn.value = cur.title || "";

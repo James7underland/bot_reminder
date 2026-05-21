@@ -58,7 +58,8 @@ def init_db():
             deadline TEXT,
             reminder_at TEXT,
             overdue_notified INTEGER NOT NULL DEFAULT 0,
-            order_index INTEGER
+            order_index INTEGER,
+            note_id INTEGER
         )
     ''')
     cursor.execute('''
@@ -130,6 +131,9 @@ def init_db():
         cursor.execute(
             "UPDATE tasks SET order_index = id WHERE order_index IS NULL"
         )
+    # Фаза 11.6: ссылка задачи на заметку (опционально).
+    if "note_id" not in columns:
+        cursor.execute("ALTER TABLE tasks ADD COLUMN note_id INTEGER")
     # Фаза 9.5: цвет списка (визуальная подсказка в Mini App).
     list_columns = {row[1] for row in cursor.execute("PRAGMA table_info(lists)")}
     if "color" not in list_columns:
@@ -2072,4 +2076,55 @@ def search_notes(user_id: int, query: str) -> list[dict]:
         body = (r["body"] or "").lower()
         if q in title or q in body:
             out.append(_row_to_note(r))
+    return out
+
+
+# --- Phase 11.6: связь задачи ↔ заметки ---
+
+def set_task_note(task_id: int, note_id: int | None) -> bool:
+    """
+    Привязывает задачу к заметке. `note_id=None` — отвязать.
+    Не валидирует ownership самостоятельно: вызывающий webapp.py уже
+    проверяет, что и task и note принадлежат пользователю (через
+    `_require_own_task` / `_require_own_note`). False — задачи нет.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE tasks SET note_id = ? WHERE id = ?", (note_id, task_id)
+    )
+    rows = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows > 0:
+        logger.info("task=%s note_id=%s", task_id, note_id)
+        return True
+    logger.warning("set_task_note: task=%s not found", task_id)
+    return False
+
+
+def get_tasks_linked_to_note(user_id: int, note_id: int) -> list[dict]:
+    """
+    Активные задачи пользователя, связанные с заметкой `note_id`.
+    Используется в Mini App для показа «эта заметка упоминается в N
+    задачах». Выполненные не показываем — обычно перетекают
+    в архив, незачем там лазить.
+    """
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, description, completed, important, list_id "
+        "FROM tasks WHERE user_id = ? AND note_id = ? AND completed = 0 "
+        "ORDER BY order_index, created_at, id",
+        (user_id, note_id),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    out = []
+    for r in rows:
+        t = dict(r)
+        t["completed"] = bool(t["completed"])
+        t["important"] = bool(t["important"])
+        out.append(t)
     return out
