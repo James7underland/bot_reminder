@@ -719,10 +719,35 @@ def test_db_move_task_invalid_returns_false():
     from database import add_task, complete_task, move_task_down, move_task_up
     a = add_task(6, "a")
     complete_task(a)
-    assert move_task_up(a) is False     # сама выполнена
+    # Phase 11.22 (#11): выполненная задача теперь подвижна, но эта —
+    # единственная в группе архива, поэтому соседа нет → False.
+    assert move_task_up(a) is False
     assert move_task_down(a) is False
     assert move_task_up(999999) is False  # нет такой
     assert move_task_down(999999) is False
+
+
+def test_db_move_task_archive_swaps_completed():
+    """Phase 11.22 (#11): в архиве стрелки ▲▼ переставляют выполненные."""
+    from database import (
+        add_task,
+        complete_task,
+        get_archived_tasks,
+        move_task_down,
+        move_task_up,
+    )
+    a = add_task(61, "a")
+    b = add_task(61, "b")
+    c = add_task(61, "c")     # останется активной — не сосед в архиве
+    complete_task(a)
+    complete_task(b)
+    assert [t["id"] for t in get_archived_tasks(61)] == [a, b]
+    assert move_task_down(a) is True       # a ↔ b
+    assert [t["id"] for t in get_archived_tasks(61)] == [b, a]
+    assert move_task_up(a) is True          # назад
+    assert [t["id"] for t in get_archived_tasks(61)] == [a, b]
+    # c активна → в архиве её нет, на свопы не влияет.
+    assert c not in [t["id"] for t in get_archived_tasks(61)]
 
 
 def test_api_move_up_down(client):
@@ -1454,10 +1479,11 @@ def test_db_reorder_task_invalid_inputs():
         reorder_task,
     )
     a = add_task(403, "a")
-    add_task(403, "b")
+    b = add_task(403, "b")
     complete_task(a)
-    # Выполненная — нельзя
-    assert reorder_task(a, after_task_id=None) is False
+    # Phase 11.22 (#11): выполненную (архив) нельзя ставить относительно
+    # активной — это разные подгруппы (after не в группе completed).
+    assert reorder_task(a, after_task_id=b) is False
     # Несуществующая
     assert reorder_task(999999, after_task_id=None) is False
     # Несуществующий after
@@ -1465,6 +1491,31 @@ def test_db_reorder_task_invalid_inputs():
     assert reorder_task(z, after_task_id=999999) is False
     # Активные не двинулись.
     assert len(get_tasks(403)) >= 1
+
+
+def test_db_reorder_task_archive_cross_list():
+    """Phase 11.22 (#11): drag в архиве работает поверх списков."""
+    from database import (
+        add_task,
+        assign_task_to_list,
+        complete_task,
+        create_list,
+        get_archived_tasks,
+        reorder_task,
+    )
+    a = add_task(405, "a")               # без списка
+    b = add_task(405, "b")
+    lid = create_list(405, "L")
+    assign_task_to_list(b, lid)          # b — в другом списке
+    complete_task(a)
+    complete_task(b)
+    assert [t["id"] for t in get_archived_tasks(405)] == [a, b]
+    # Перетаскиваем b в начало, несмотря на разные списки.
+    assert reorder_task(b, after_task_id=None) is True
+    assert [t["id"] for t in get_archived_tasks(405)] == [b, a]
+    # И a после b.
+    assert reorder_task(a, after_task_id=b) is True
+    assert [t["id"] for t in get_archived_tasks(405)] == [b, a]
 
 
 def test_api_reorder(client):
@@ -2360,12 +2411,14 @@ def test_api_patch_blocked_on_deleted_task(client):
 
 # --- Phase 11.11: архив выполненных + меню команд бота ---
 
-def test_db_get_archived_tasks_newest_first():
+def test_db_get_archived_tasks_manual_order():
+    """Phase 11.22 (#11): архив сортируется по ручному order_index."""
     from database import (
         add_task,
         complete_task,
         delete_task,
         get_archived_tasks,
+        reorder_task,
     )
     a = add_task(4000, "first done")
     b = add_task(4000, "later done")
@@ -2377,9 +2430,12 @@ def test_db_get_archived_tasks_newest_first():
     delete_task(deleted)            # выполнено + удалено → не в архиве
     archive = get_archived_tasks(4000)
     # `c` активная → не в архиве; `deleted` удалена → не в архиве.
-    # `b` завершилась позже → её id больше → выше.
-    assert [t["id"] for t in archive] == [b, a]
+    # По умолчанию — порядок order_index (a добавлена раньше b).
+    assert [t["id"] for t in archive] == [a, b]
     assert c not in [t["id"] for t in archive]
+    # Ручная перестановка внутри архива сохраняется в выдаче.
+    assert reorder_task(b, after_task_id=None) is True
+    assert [t["id"] for t in get_archived_tasks(4000)] == [b, a]
 
 
 def test_db_get_archived_tasks_user_isolated():

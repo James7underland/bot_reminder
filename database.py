@@ -1088,9 +1088,11 @@ def get_important_tasks(user_id: int) -> list[dict]:
 
 def get_archived_tasks(user_id: int) -> list[dict]:
     """
-    Phase 11.11: выполненные задачи пользователя (архив). Самые недавние
-    сверху — у нас нет `completed_at`, поэтому сортируем по `id DESC`:
-    `id` монотонный и приближённо отражает порядок завершения.
+    Phase 11.11: выполненные задачи пользователя (архив).
+
+    Phase 11.22 (замечание #11): сортируем по ручному порядку
+    (`order_index`), чтобы стрелки ▲▼ и drag-and-drop внутри архива
+    отражались в выдаче. `created_at, id` — стабильный tie-break.
     """
     conn = get_connection()
     conn.row_factory = sqlite3.Row
@@ -1098,7 +1100,7 @@ def get_archived_tasks(user_id: int) -> list[dict]:
     cursor.execute(
         "SELECT * FROM tasks WHERE user_id = ? AND completed = 1 "
         "AND deleted_at IS NULL "
-        "ORDER BY id DESC",
+        "ORDER BY order_index, created_at, id",
         (user_id,),
     )
     rows = cursor.fetchall()
@@ -1314,38 +1316,46 @@ def mark_overdue_notified(task_id: int) -> bool:
 def _move_task(task_id: int, direction: int) -> bool:
     """
     direction = -1 (вверх) или +1 (вниз). Меняется местами с ближайшим
-    активным «соседом» того же пользователя в том же списке (включая
-    «без списка», когда list_id IS NULL). False, если задачи нет, она
-    выполнена, или соседа в этом направлении не существует (крайняя).
+    «соседом» того же пользователя с тем же статусом `completed`. False,
+    если задачи нет или соседа в этом направлении не существует (крайняя).
     Per-user `order_index` уникален (см. `add_task`), поэтому простого
     свопа двух значений достаточно — без сдвига промежутка.
+
+    Phase 11.22 (замечание #11): активные задачи переставляются внутри
+    своего списка; архивные (`completed = 1`) — единой кросс-списочной
+    группой, как они показываются в «Архиве».
     """
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     cursor.execute(
         "SELECT id, user_id, list_id, order_index, completed "
-        "FROM tasks WHERE id = ?",
+        "FROM tasks WHERE id = ? AND deleted_at IS NULL",
         (task_id,),
     )
     row = cursor.fetchone()
-    if row is None or row["completed"]:
+    if row is None:
         conn.close()
-        logger.warning("_move_task: task=%s missing or completed", task_id)
+        logger.warning("_move_task: task=%s missing", task_id)
         return False
     user_id, list_id, idx = row["user_id"], row["list_id"], row["order_index"]
-    # Сосед — активная задача того же пользователя в том же списке (или
-    # тоже «без списка»), с минимально большим/меньшим order_index.
-    if list_id is None:
-        list_clause = "AND list_id IS NULL"
+    comp_flag = 1 if row["completed"] else 0
+    # Сосед — задача того же пользователя с тем же статусом completed,
+    # с минимально большим/меньшим order_index. Для активных — в том же
+    # списке (или тоже «без списка»); для архива — список игнорируем.
+    if comp_flag:
+        list_clause = ""
         params: tuple = (user_id, idx)
+    elif list_id is None:
+        list_clause = "AND list_id IS NULL"
+        params = (user_id, idx)
     else:
         list_clause = "AND list_id = ?"
         params = (user_id, idx, list_id)
     if direction < 0:
         cursor.execute(
             f"SELECT id, order_index FROM tasks WHERE user_id = ? "
-            f"AND completed = 0 AND deleted_at IS NULL "
+            f"AND completed = {comp_flag} AND deleted_at IS NULL "
             f"AND order_index < ? {list_clause} "
             "ORDER BY order_index DESC, id DESC LIMIT 1",
             params,
@@ -1353,7 +1363,7 @@ def _move_task(task_id: int, direction: int) -> bool:
     else:
         cursor.execute(
             f"SELECT id, order_index FROM tasks WHERE user_id = ? "
-            f"AND completed = 0 AND deleted_at IS NULL "
+            f"AND completed = {comp_flag} AND deleted_at IS NULL "
             f"AND order_index > ? {list_clause} "
             "ORDER BY order_index, id LIMIT 1",
             params,
@@ -1391,14 +1401,19 @@ def move_task_down(task_id: int) -> bool:
 def reorder_task(task_id: int, after_task_id: int | None) -> bool:
     """
     Phase 10.6 (drag-and-drop): помещает `task_id` сразу после
-    `after_task_id` среди активных задач того же пользователя в том же
-    списке. `after_task_id=None` — двигает в начало. Если `after_task_id`
-    отсутствует/принадлежит другому юзеру или списку — False.
+    `after_task_id` среди задач того же пользователя с тем же статусом
+    `completed`. `after_task_id=None` — двигает в начало. Если
+    `after_task_id` отсутствует/принадлежит другому юзеру или подгруппе —
+    False.
 
-    Внутри: одна транзакция. Достаём всех активных «соседей» (user_id,
-    list_id), убираем `task_id` из их последовательности, вставляем в
-    нужное место, перенумеровываем `order_index = i+1`. Простая
-    линейная сложность — на практике задач немного.
+    Phase 11.22 (замечание #11): активные задачи переставляются внутри
+    своего списка; архивные (`completed = 1`) — единой кросс-списочной
+    группой (в «Архиве» списки не разделяются).
+
+    Внутри: одна транзакция. Достаём всех «соседей» нужной подгруппы,
+    убираем `task_id` из их последовательности, вставляем в нужное место,
+    перенумеровываем `order_index = i+1`. Простая линейная сложность — на
+    практике задач немного.
     """
     conn = get_connection()
     conn.row_factory = sqlite3.Row
@@ -1410,12 +1425,21 @@ def reorder_task(task_id: int, after_task_id: int | None) -> bool:
             (task_id,),
         )
         row = cursor.fetchone()
-        if row is None or row["completed"] or row["deleted_at"]:
+        if row is None or row["deleted_at"]:
             return False
         user_id, list_id = row["user_id"], row["list_id"]
-        # Берём только активных соседей (выполненные/удалённые не
-        # отображаются и не должны влиять на порядок).
-        if list_id is None:
+        comp_flag = 1 if row["completed"] else 0
+        # Соседи — задачи той же подгруппы (тот же completed). Удалённые
+        # исключаем. Архив (completed) — кросс-списочный, активные —
+        # в пределах своего списка.
+        if comp_flag:
+            cursor.execute(
+                "SELECT id FROM tasks WHERE user_id = ? AND completed = 1 "
+                "AND deleted_at IS NULL "
+                "ORDER BY order_index, created_at, id",
+                (user_id,),
+            )
+        elif list_id is None:
             cursor.execute(
                 "SELECT id FROM tasks WHERE user_id = ? AND completed = 0 "
                 "AND deleted_at IS NULL AND list_id IS NULL "
