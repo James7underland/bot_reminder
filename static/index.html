@@ -36,24 +36,6 @@
   .drag-handle svg{opacity:.7}
   .star svg{transition:transform .12s, fill .12s}
   .star.on{color:#f5b301}
-  body.is-mobile .fs-btn{display:none}
-  /* Phase 11.15: CSS-pseudo-fullscreen — последний резерв, когда ни
-     tg.requestFullscreen, ни document.requestFullscreen не работают
-     (часто из-за iframe permissions policy в Telegram WebApp). */
-  body.pseudo-fs{position:fixed;inset:0;width:100vw;height:100vh;
-    z-index:9999;overflow-y:auto;background:var(--bg)}
-  /* Phase 11.20: persistent-баннер про CSS-fullscreen режим. */
-  .fs-banner{position:fixed;top:6px;left:50%;
-    transform:translateX(-50%);max-width:min(720px, 92vw);
-    background:#fbbf24;color:#111827;padding:8px 14px;border-radius:8px;
-    box-shadow:0 4px 12px rgba(0,0,0,.2);z-index:10000;
-    display:flex;align-items:center;gap:10px;font-size:13px;
-    line-height:1.4}
-  .fs-banner-text{flex:1}
-  .fs-banner-close{background:transparent;border:none;color:#111827;
-    cursor:pointer;padding:2px 6px;border-radius:4px;
-    display:inline-flex;align-items:center;justify-content:center}
-  .fs-banner-close:hover{background:rgba(0,0,0,.08)}
   /* Phase 11.18: floating action button (FAB) для добавления задачи /
      заметки. Правый нижний угол, заметная, но не мешающая. */
   .fab{position:fixed;right:18px;bottom:18px;width:56px;height:56px;
@@ -200,11 +182,14 @@
   li.dragging{opacity:.55}
   li.drop-above{box-shadow:inset 0 3px 0 var(--btn)}
   li.drop-below{box-shadow:inset 0 -3px 0 var(--btn)}
-  /* Phase 11.7: inline-edit заголовка задачи */
-  .edit-title{width:100%;padding:4px 6px;font-size:15px;
-    background:var(--card);color:var(--text);
-    border:1px solid var(--btn);border-radius:6px}
-  li.editing .panel{display:none !important}
+  /* Phase 11.7/11.22: полоска снизу со стрелкой раскрывает описание. */
+  .expand-strip{display:flex;align-items:center;justify-content:center;
+    height:20px;margin-top:6px;color:var(--hint);cursor:pointer;
+    border-top:1px solid rgba(127,127,127,.12);border-radius:0 0 8px 8px;
+    transition:background .12s}
+  .expand-strip:hover{background:rgba(127,127,127,.08);color:var(--text)}
+  .expand-strip svg{width:18px;height:18px;transition:transform .2s}
+  li.expanded .expand-strip svg{transform:rotate(180deg)}
   .panel{margin-top:10px;display:none;flex-direction:column;gap:8px}
   .panel.open{display:flex}
   .panel label{font-size:12px;color:var(--hint)}
@@ -349,7 +334,6 @@
   <button id="navBtn" class="icon-btn" title="Меню" data-icon="menu"></button>
   <h1 id="appTitle">Мои задачи</h1>
   <div id="statsBadge" class="stats-badge" hidden title="Статистика">…</div>
-  <button id="fsBtn" class="icon-btn" hidden title="На весь экран" data-icon="maximize"></button>
   <button id="moreBtn" class="icon-btn" title="Ещё" data-icon="more"></button>
 </header>
 
@@ -533,258 +517,18 @@ const IS_DESKTOP = tg
   ? DESKTOP_PLATFORMS.has((tg.platform || "").toLowerCase())
   : false;
 
-// Phase 11.13: двухуровневая стратегия fullscreen.
-// 1) tg.requestFullscreen() — Bot API 8.0+ (Telegram Desktop 11.5+).
-//    Преимущество: интегрирован с UI Telegram; работает корректно
-//    в мобильном клиенте (там, по крайней мере, в теории — на iOS
-//    fullscreen блокируется системой).
-// 2) document.documentElement.requestFullscreen() — нативный браузерный
-//    Fullscreen API. Telegram Desktop = Chromium-based, поэтому работает
-//    всегда при наличии user-gesture (клика). Telegram Web — то же.
-//    Не работает в iOS Safari/Telegram-iOS (Apple запрещает).
-function _tgFsSupported() {
-  if (!tg || typeof tg.requestFullscreen !== "function") return false;
-  try {
-    return tg.isVersionAtLeast ? tg.isVersionAtLeast("8.0") : true;
-  } catch { return false; }
-}
-function _browserFsSupported() {
-  return !!(document.documentElement.requestFullscreen ||
-            document.documentElement.webkitRequestFullscreen);
-}
-function _browserFsActive() {
-  return !!(document.fullscreenElement || document.webkitFullscreenElement);
-}
-async function _enterFullscreen() {
-  // Пробуем TG-нативный путь; если не поддержан или провалился —
-  // браузерный API. Возвращает true, если хоть один путь сработал.
-  if (_tgFsSupported()) {
-    try { tg.requestFullscreen(); return true; }
-    catch { /* fall through */ }
-  }
-  if (_browserFsSupported()) {
-    try {
-      const el = document.documentElement;
-      const req = el.requestFullscreen || el.webkitRequestFullscreen;
-      await req.call(el);
-      return true;
-    } catch (e) {
-      console.warn("[mini-app] browser fullscreen failed:", e);
-      return false;
-    }
-  }
-  return false;
-}
-async function _exitFullscreen() {
-  if (_tgFsSupported() && tg.isFullscreen) {
-    try { tg.exitFullscreen(); return true; }
-    catch { /* fall through */ }
-  }
-  if (document.exitFullscreen) {
-    try { await document.exitFullscreen(); return true; }
-    catch { /* ignore */ }
-  } else if (document.webkitExitFullscreen) {
-    try { document.webkitExitFullscreen(); return true; }
-    catch { /* ignore */ }
-  }
-  return false;
-}
-function _isFullscreen() {
-  return (tg && tg.isFullscreen) || _browserFsActive();
-}
-
+// Phase 11.22: идею fullscreen отменили (Telegram не даёт менять размер
+// своего окна из WebApp без Bot API 8.0; городить CSS-костыли смысла нет).
+// Оставляем только tg.ready()/expand() и body-класс is-desktop/is-mobile.
 function _setupWindowMode() {
   if (!tg) return;
   tg.ready();
   document.body.classList.add(IS_DESKTOP ? "is-desktop" : "is-mobile");
-
   if (IS_DESKTOP) {
-    // На десктопе сразу максимизируем popup TG (expand).
     try { tg.expand(); } catch {}
-    // tg.requestFullscreen() пытается, но без user-gesture часто
-    // отказывает. Это OK — у пользователя есть кнопка ⛶, она
-    // дёрнет fullscreen уже с реальным кликом (см. _enterFullscreen).
-    if (_tgFsSupported()) {
-      try { tg.requestFullscreen(); } catch {}
-    }
   }
-
-  try {
-    console.log(
-      "[mini-app] platform=%s ver=%s desktop=%s viewport=%s expanded=%s "
-        + "tg_fs=%s tg_fs_supported=%s browser_fs_supported=%s",
-      tg.platform, tg.version, IS_DESKTOP, tg.viewportHeight, tg.isExpanded,
-      tg.isFullscreen, _tgFsSupported(), _browserFsSupported(),
-    );
-  } catch { /* SDK без этих полей — нет проблем */ }
 }
 _setupWindowMode();
-
-// Phase 11.15: «псевдо-fullscreen» через CSS — последний резерв.
-// Если ни TG, ни браузерный API не сработали (часто из-за iframe
-// permissions policy), мы хотя бы максимизируем body внутри того окна,
-// что Telegram нам выдал. Это не настоящий fullscreen, но визуально
-// заполняет всё доступное место.
-let _pseudoFs = false;
-function _pseudoFsOn() {
-  document.body.classList.add("pseudo-fs");
-  _pseudoFs = true;
-}
-function _pseudoFsOff() {
-  document.body.classList.remove("pseudo-fs");
-  _pseudoFs = false;
-}
-
-function _updateFsButton() {
-  const btn = document.getElementById("fsBtn");
-  if (!btn || !IS_DESKTOP) return;
-  // Phase 11.15: ВСЕГДА показываем на десктопе.
-  btn.hidden = false;
-  const on = _isFullscreen() || _pseudoFs;
-  btn.dataset.icon = on ? "minimize" : "maximize";
-  btn._iconApplied = null;     // принудительно перерисуем SVG
-  applyIcons(btn.parentElement);
-  btn.title = on ? "Свернуть окно" : "Развернуть на весь экран";
-}
-
-// Phase 11.20: persistent-баннер пояснение, когда настоящего fullscreen
-// нет (TG отказал, браузерный API заблокирован iframe permissions
-// policy — частая ситуация в TG WebApp). Пользователь хотя бы знает,
-// в каком состоянии находится и почему.
-function _showFsBanner(msg) {
-  let bnr = document.getElementById("fsBanner");
-  if (!bnr) {
-    bnr = document.createElement("div");
-    bnr.id = "fsBanner";
-    bnr.className = "fs-banner";
-    bnr.innerHTML =
-      `<span class="fs-banner-text"></span>` +
-      `<button class="fs-banner-close" data-icon="x" title="Скрыть"></button>`;
-    document.body.appendChild(bnr);
-    bnr.querySelector(".fs-banner-close").onclick = () => bnr.remove();
-    applyIcons(bnr);
-  }
-  bnr.querySelector(".fs-banner-text").textContent = msg;
-}
-function _hideFsBanner() {
-  const bnr = document.getElementById("fsBanner");
-  if (bnr) bnr.remove();
-}
-
-function _setupFullscreenButton() {
-  if (!IS_DESKTOP) return;
-  const btn = document.getElementById("fsBtn");
-  if (!btn) return;
-  _updateFsButton();
-  btn.onclick = async () => {
-    // — Свернуть, если уже развёрнуто.
-    if (_isFullscreen() || _pseudoFs) {
-      let exited = false;
-      if (_tgFsSupported() && tg.isFullscreen) {
-        try { tg.exitFullscreen(); exited = true; } catch {}
-      }
-      if (_browserFsActive()) {
-        try {
-          if (document.exitFullscreen) await document.exitFullscreen();
-          else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
-          exited = true;
-        } catch {}
-      }
-      if (_pseudoFs) { _pseudoFsOff(); exited = true; }
-      _hideFsBanner();
-      if (!exited) uiToast("Не удалось свернуть");
-      setTimeout(_updateFsButton, 200);
-      return;
-    }
-
-    // — Развернуть. Phase 11.20: ВКЛЮЧАЕМ pseudo-fs СРАЗУ, чтобы у
-    // пользователя был мгновенный визуальный отклик. В фоне пробуем
-    // настоящие API — если сработают, снимаем pseudo-fs (там TG/браузер
-    // сами растянут окно).
-    _pseudoFsOn();
-    _updateFsButton();
-
-    const tries = [];
-    let realFsWorks = false;
-
-    // 1) TG-нативный fullscreen.
-    if (_tgFsSupported()) {
-      try {
-        tg.requestFullscreen();
-        await new Promise(r => setTimeout(r, 400));
-        if (tg.isFullscreen) {
-          tries.push("tg → ok");
-          realFsWorks = true;
-        } else {
-          tries.push("tg → ignored (молча отказал)");
-        }
-      } catch (e) {
-        tries.push("tg → ex: " + (e.message || e));
-      }
-    } else {
-      const ver = tg ? (tg.version || "?") : "no-tg";
-      tries.push(`tg fs unsupported (TG ${ver}, нужно 11.5+ / API 8.0)`);
-    }
-
-    // 2) Браузерный Fullscreen API (если TG не сработал).
-    if (!realFsWorks && _browserFsSupported()) {
-      try {
-        const el = document.documentElement;
-        const req = el.requestFullscreen || el.webkitRequestFullscreen;
-        await req.call(el);
-        tries.push("browser → ok");
-        realFsWorks = true;
-      } catch (e) {
-        tries.push("browser → " + (e.name || "ex") + ": " + (e.message || e));
-      }
-    } else if (!realFsWorks) {
-      tries.push("browser fs API absent");
-    }
-
-    if (realFsWorks) {
-      // Настоящий fullscreen активен — CSS-режим больше не нужен.
-      _pseudoFsOff();
-      _hideFsBanner();
-    } else {
-      // Все API отказали. Pseudo-fs уже включён — оставляем + объясняем.
-      _showFsBanner(
-        "CSS-режим: содержимое заполняет окно Telegram, но само окно " +
-        "увеличить может только Telegram. Чтобы получить настоящий " +
-        "fullscreen — обнови Telegram Desktop до 11.5+. Диагностика: " +
-        tries.join(" · "),
-      );
-      // Phase 11.21: полная диагностика через нативный showAlert —
-      // он точно отобразится, и пользователь сможет переслать её мне.
-      // `document.fullscreenEnabled === false` = iframe без
-      // allow="fullscreen" (политика самого Telegram, не наша).
-      const diag =
-        "FULLSCREEN ДИАГНОСТИКА\n" +
-        "platform: " + (tg ? tg.platform : "no-tg") + "\n" +
-        "tg.version: " + (tg ? tg.version : "—") + "\n" +
-        "isVersionAtLeast 8.0: " +
-          (tg && tg.isVersionAtLeast ? tg.isVersionAtLeast("8.0") : "n/a") + "\n" +
-        "typeof requestFullscreen: " +
-          (tg ? typeof tg.requestFullscreen : "—") + "\n" +
-        "tg.isFullscreen: " + (tg ? tg.isFullscreen : "—") + "\n" +
-        "browser fs supported: " + _browserFsSupported() + "\n" +
-        "document.fullscreenEnabled: " + document.fullscreenEnabled + "\n" +
-        "viewport: " + window.innerWidth + "×" + window.innerHeight +
-          " (tg vh=" + (tg ? tg.viewportHeight : "—") + ")\n" +
-        "tries: " + tries.join(" | ");
-      console.log("[mini-app] " + diag);
-      uiAlert(diag);
-    }
-    setTimeout(_updateFsButton, 100);
-  };
-
-  // Иконка синхронизируется с любым из трёх состояний.
-  try {
-    tg.onEvent("fullscreenChanged", _updateFsButton);
-    tg.onEvent("fullscreenFailed", _updateFsButton);
-  } catch { /* старый SDK */ }
-  document.addEventListener("fullscreenchange", _updateFsButton);
-  document.addEventListener("webkitfullscreenchange", _updateFsButton);
-}
 
 // initData читаем КАЖДЫЙ раз, а не один раз при загрузке: некоторые
 // клиенты Telegram дозаполняют поле после `ready()` или после первого
@@ -1106,6 +850,11 @@ async function load(){
   let tasks;
   const sq = $("#search").value.trim();
   const view = $("#viewSel").value;
+  // Phase 11.22 (#3): «с выполненными» осмысленно только в обычном
+  // списке. В smart-views и архиве — прячем (в архиве и так всё
+  // выполненное).
+  const showDoneWrap = $("#showDone").closest(".inline-toggle");
+  if (showDoneWrap) showDoneWrap.style.display = (view === "all") ? "" : "none";
   if (sq) {
     tasks = await api("/tasks?search=" + encodeURIComponent(sq));
   } else if (view === "myday") {
@@ -1137,8 +886,10 @@ async function load(){
   // соответствует order_index — это «Все» (без поиска) и «по списку».
   // В smart-views (myday/planned/important) и при поиске список
   // отсортирован по другим критериям, drag сбил бы порядок.
+  // Phase 11.22 (#11): в архиве drag/стрелки тоже работают (порядок
+  // среди выполненных). Smart-views и поиск — без drag (там сорт иной).
   const dragEnabled = !sq &&
-    !["myday","planned","important","archive"].includes(view) &&
+    !["myday","planned","important"].includes(view) &&
     !$("#sortSel").value;
   if (dragEnabled) attachDragDrop(ul);
   refreshStats();
@@ -1153,9 +904,12 @@ async function load(){
 // рендер: load() показывает задачи синхронно, бэйдж подтягивается
 // следом.
 async function refreshStats(){
+  const badge = $("#statsBadge");
+  // Phase 11.22 (#14): в разделе «Заметки» счётчик активных задач не
+  // показываем — он там не к месту.
+  if (_section === "notes") { badge.hidden = true; return; }
   try {
     const s = await api("/stats", {_silent: true});
-    const badge = $("#statsBadge");
     let txt = `<span class="num">${s.active}</span> активн.`;
     if (s.important) txt += ` · <span class="imp">★ ${s.important}</span>`;
     if (s.steps_open) txt += ` · 📋 ${s.steps_open}`;
@@ -1329,51 +1083,6 @@ function attachDragDrop(ul){
   });
 }
 
-// Phase 11.7: inline-edit заголовка задачи. Двойной клик на `.ttl`
-// подменяет текст на <input>; Enter / blur сохраняет, Escape отменяет.
-function inlineEditTitle(li, t) {
-  const ttl = li.querySelector(".ttl");
-  if (!ttl) return;
-  const meta = ttl.querySelector(".meta");
-  const metaHTML = meta ? meta.outerHTML : "";
-  const orig = t.description;
-  li.classList.add("editing");
-  // Сохраняем и закрываем панель, если она была открыта — текст
-  // дублируется в `.f-desc` внутри панели, чтобы не путаться.
-  const panel = li.querySelector(".panel");
-  if (panel) panel.classList.remove("open");
-
-  const inp = document.createElement("input");
-  inp.type = "text";
-  inp.className = "edit-title";
-  inp.value = orig;
-  inp.maxLength = 500;
-  // Заменяем текст на input, оставляя .meta под ним.
-  ttl.innerHTML = "";
-  ttl.appendChild(inp);
-  if (metaHTML) ttl.insertAdjacentHTML("beforeend", metaHTML);
-  setTimeout(() => { inp.focus(); inp.select(); }, 10);
-
-  let done = false;
-  const finish = async (commit) => {
-    if (done) return;
-    done = true;
-    const v = inp.value.trim();
-    li.classList.remove("editing");
-    if (!commit || !v || v === orig) {
-      load();   // просто перерисовываем — input исчезнет
-      return;
-    }
-    await api(`/tasks/${t.id}`, {method:"PATCH",
-      body: JSON.stringify({description: v})});
-    load();
-  };
-  inp.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); finish(true); }
-    else if (e.key === "Escape") { e.preventDefault(); finish(false); }
-  });
-  inp.addEventListener("blur", () => finish(true));
-}
 
 function row(t){
   const li = document.createElement("li");
@@ -1387,6 +1096,11 @@ function row(t){
     const lst = LISTS.find(l => l.id === t.list_id);
     if (lst && lst.color) li.style.setProperty("--accent", lst.color);
   }
+  // Phase 11.11: в архиве звезду «важно» не показываем (там нельзя
+  // менять важность); стрелки порядка остаются.
+  const isArchive = $("#viewSel") && $("#viewSel").value === "archive";
+  const starBtn = isArchive ? "" :
+    `<button class="star ${t.important?'on':''}" data-act="star" data-icon="star${t.important?'-fill':''}"></button>`;
   li.innerHTML = `
     <div class="row">
       <span class="drag-handle" title="Перетащить" data-icon="grip"></span>
@@ -1395,18 +1109,15 @@ function row(t){
         <div class="meta"></div></div>
       <button class="ghost mv" data-act="mv-up" title="Выше" data-icon="chev-up"></button>
       <button class="ghost mv" data-act="mv-down" title="Ниже" data-icon="chev-down"></button>
-      <button class="star ${t.important?'on':''}" data-act="star" data-icon="star${t.important?'-fill':''}"></button>
+      ${starBtn}
     </div>
+    <!-- Phase 11.7: полоска снизу со стрелкой раскрывает описание. -->
+    <div class="expand-strip" data-act="expand" title="Подробнее"
+         data-icon="chev-down"></div>
     <div class="panel">
       <label>Описание<input class="f-desc" value="${esc(t.description)}"></label>
       <label>Срок<input type="datetime-local" class="f-dl"></label>
       <label>Напоминание<input type="datetime-local" class="f-rm"></label>
-      <div class="pbtns" style="font-size:13px">
-        <span style="color:var(--hint)">Отложить:</span>
-        <button class="ghost" data-act="snooze" data-min="15">+15 мин</button>
-        <button class="ghost" data-act="snooze" data-min="60">+1 ч</button>
-        <button class="ghost" data-act="snooze" data-min="tomorrow">до завтра 9:00</button>
-      </div>
       <label>Повтор
         <select class="f-rec">
           <option value="">нет</option>
@@ -1518,72 +1229,36 @@ function row(t){
       </div>`).join("");
   }
 
-  $(".ttl", li).onclick = (e) => {
-    // Phase 11.4: в режиме мульти-выбора клик по тексту тоже toggle'ит.
-    if (selectMode) {
-      e.preventDefault();
-      e.stopPropagation();
-      toggleSelect(t.id);
-      return;
-    }
-    // Если уже в режиме inline-edit — клик внутри input не должен
-    // закрывать панель или что-то делать.
-    if (li.classList.contains("editing")) return;
-    const p = $(".panel", li);
-    p.classList.toggle("open");
-    if (p.classList.contains("open") &&
-        $(".steps", li).dataset.loaded === "0") refreshSteps();
-  };
-  // Phase 11.7: двойной клик → inline-редактирование описания.
-  $(".ttl", li).addEventListener("dblclick", (e) => {
-    if (selectMode || li.classList.contains("editing")) return;
-    e.preventDefault();
-    e.stopPropagation();
-    inlineEditTitle(li, t);
-  });
-  // Phase 11.4: long-press по `.ttl` → вход в режим мульти-выбора.
-  let _lpTimer = null;
-  let _lpX = 0, _lpY = 0;
-  const _ttl = $(".ttl", li);
-  _ttl.addEventListener("pointerdown", (e) => {
-    if (selectMode) return;
-    _lpX = e.clientX; _lpY = e.clientY;
-    _lpTimer = setTimeout(() => {
-      _lpTimer = null;
-      if (tg && tg.HapticFeedback) {
-        try { tg.HapticFeedback.impactOccurred("medium"); } catch {}
-      }
-      enterSelectMode(t.id);
-    }, 500);
-  });
-  const _cancelLP = (e) => {
-    if (_lpTimer && e && (Math.abs(e.clientX - _lpX) > 10 ||
-                          Math.abs(e.clientY - _lpY) > 10)) {
-      clearTimeout(_lpTimer); _lpTimer = null;
-    }
-  };
-  _ttl.addEventListener("pointermove", _cancelLP);
-  _ttl.addEventListener("pointerup", () => {
-    if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
-  });
-  _ttl.addEventListener("pointercancel", () => {
-    if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
-  });
+  // Phase 11.22 (#6, #7): тап по строке = выделить; раскрытие — стрелкой
+  // снизу. Inline-edit и long-press убраны (вся логика в делегированном
+  // обработчике ниже).
 
   li._refreshSteps = refreshSteps;
   li.addEventListener("click", async (e) => {
-    // Phase 11.4: в режиме мульти-выбора игнорируем кнопки-действия,
-    // любой клик по строке = toggle selection (если не по .ttl, который
-    // уже сам обработан выше).
-    if (selectMode) {
-      if (!e.target.closest(".ttl")) {
-        e.preventDefault();
-        toggleSelect(t.id);
-      }
+    // Phase 11.22 (#4): SVG-иконки в кнопках «съедали» клик — ищем
+    // ближайший элемент с data-act через closest().
+    const actEl = e.target.closest("[data-act]");
+    const act = actEl ? actEl.dataset.act : null;
+    const inRow = !!e.target.closest(".row");
+
+    // Phase 11.22 (#6): одиночный тап по строке (вне кнопок) = ВЫДЕЛИТЬ.
+    // Описание не открывается, имя не редактируется. Раскрытие — только
+    // стрелкой снизу (#7, data-act="expand").
+    if (inRow && (!act || (selectMode && act !== "toggle"))) {
+      e.preventDefault();
+      if (!selectMode) enterSelectMode(t.id);
+      else toggleSelect(t.id);
       return;
     }
-    const act = e.target.dataset.act;
     if (!act) return;
+    // Phase 11.7: раскрытие/сворачивание панели по стрелке снизу.
+    if (act === "expand") {
+      const p = $(".panel", li);
+      const open = p.classList.toggle("open");
+      li.classList.toggle("expanded", open);
+      if (open && $(".steps", li).dataset.loaded === "0") refreshSteps();
+      return;
+    }
     if (act === "toggle") {
       // Phase 11.16: при «выполнить» — короткая анимация перед load().
       // При «вернуть в активные» — без анимации (визуально она тут вредна).
@@ -1655,19 +1330,6 @@ function row(t){
     } else if (act === "myday") {
       await api(`/tasks/${t.id}/myday`, {method:"POST",
         body: JSON.stringify({on: !t.myday_date})});
-      load();
-    } else if (act === "snooze") {
-      let m = e.target.dataset.min;
-      if (m === "tomorrow") {
-        const n = new Date();
-        const tmr = new Date(n.getFullYear(), n.getMonth(),
-                             n.getDate() + 1, 9, 0, 0);
-        m = Math.max(1, Math.round((tmr - n) / 60000));
-      } else {
-        m = parseInt(m, 10);
-      }
-      await api(`/tasks/${t.id}/snooze`, {method:"POST",
-        body: JSON.stringify({minutes: m})});
       load();
     } else if (act === "clr-dl") {
       await api(`/tasks/${t.id}`, {method:"PATCH",
@@ -2363,9 +2025,6 @@ function openNoteEditor(note) {
   if (_UI.showDone) $("#showDone").checked = true;
   // listId уже инициализирован из _UI; loadLists() сам выставит value.
 })();
-
-// Phase 11.8: кнопка ⛶ навешивается, когда DOM готов и шапка отрисована.
-_setupFullscreenButton();
 
 (async () => {
   try {
