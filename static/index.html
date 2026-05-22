@@ -855,6 +855,12 @@ async function load(){
   // выполненное).
   const showDoneWrap = $("#showDone").closest(".inline-toggle");
   if (showDoneWrap) showDoneWrap.style.display = (view === "all") ? "" : "none";
+  // Phase 11.22 (#15): в архив нельзя добавлять задачи кнопкой — только
+  // при выполнении. Прячем строку «+ Новая задача» и FAB.
+  const inArchive = view === "archive";
+  const addBar = $("#newTask").closest(".bar");
+  if (addBar) addBar.style.display = inArchive ? "none" : "";
+  document.body.classList.toggle("fab-hidden", inArchive);
   if (sq) {
     tasks = await api("/tasks?search=" + encodeURIComponent(sq));
   } else if (view === "myday") {
@@ -892,7 +898,7 @@ async function load(){
     !["myday","planned","important"].includes(view) &&
     !$("#sortSel").value;
   if (dragEnabled) attachDragDrop(ul);
-  refreshStats();
+  refreshStats(view, tasks);
   // Phase 11.4: после повторного рендера восстанавливаем подсветку
   // выделенных задач (id могут переехать в смежных тасках при
   // редактировании, но базово set остаётся в силе).
@@ -903,20 +909,32 @@ async function load(){
 // после изменений, влияющих на счётчики. Не блокирует первый
 // рендер: load() показывает задачи синхронно, бэйдж подтягивается
 // следом.
-async function refreshStats(){
+async function refreshStats(view, tasks){
   const badge = $("#statsBadge");
   // Phase 11.22 (#14): в разделе «Заметки» счётчик активных задач не
   // показываем — он там не к месту.
   if (_section === "notes") { badge.hidden = true; return; }
-  try {
-    const s = await api("/stats", {_silent: true});
-    let txt = `<span class="num">${s.active}</span> активн.`;
-    if (s.important) txt += ` · <span class="imp">★ ${s.important}</span>`;
-    if (s.steps_open) txt += ` · 📋 ${s.steps_open}`;
-    badge.innerHTML = txt;
-    badge._stats = s;
-    badge.hidden = false;
-  } catch { /* /stats недоступен — молча скрываем бэйдж */ }
+  // Phase 11.22 (#15): счётчик отражает ТЕКУЩИЙ раздел, а не глобальную
+  // сумму. Берём из уже загруженного списка (в «Важном» — важные, в
+  // списке — активные этого списка, в архиве — число выполненных).
+  view = view || $("#viewSel").value;
+  const list = tasks || [];
+  let count, label;
+  if (view === "archive") {
+    count = list.length;
+    label = "в архиве";
+  } else {
+    count = list.filter(t => !t.completed).length;
+    label = view === "important" ? "важных"
+          : view === "myday" ? "на сегодня"
+          : view === "planned" ? "запланир."
+          : "активн.";
+  }
+  badge.innerHTML = `<span class="num">${count}</span> ${label}`;
+  badge.hidden = false;
+  // Подробная (глобальная) статистика — для попапа по клику. Тихо.
+  try { badge._stats = await api("/stats", {_silent: true}); }
+  catch { /* /stats недоступен — попап просто без деталей */ }
 }
 
 $("#statsBadge").onclick = async () => {
@@ -1182,6 +1200,11 @@ function row(t){
       </div>
     </div>`;
   const meta = [];
+  // Phase 11.22 (#12): для выполненных показываем время выполнения
+  // (уже в часовом поясе пользователя — конвертация на бэкенде, #10).
+  if (t.completed && t.completed_at) {
+    meta.push("✓ выполнено " + fmt(t.completed_at));
+  }
   if (t.deadline) meta.push("срок " + fmt(t.deadline) +
       (t.overdue ? " (просрочено)" : ""));
   if (t.reminder_at) meta.push("напомню " + fmt(t.reminder_at));
@@ -1390,7 +1413,28 @@ async function addTask(){
   const inp = $("#newTask");
   const d = inp.value.trim();
   if (!d) return;
-  await api("/tasks", {method:"POST", body: JSON.stringify({description:d})});
+  const view = $("#viewSel").value;
+  // Phase 11.22 (#15): в архив через кнопку добавлять нельзя.
+  if (view === "archive") return;
+  const created = await api("/tasks", {method:"POST",
+    body: JSON.stringify({description:d})});
+  // Phase 11.22 (#15): новая задача наследует текущий раздел —
+  // «Важное» → важная; «Мой день» → закреплена на сегодня; выбранный
+  // список → кладём в него. «Все»/«Запланировано» — без изменений.
+  const id = created && created.id;
+  if (id != null) {
+    if (view === "important") {
+      await api(`/tasks/${id}`, {method:"PATCH",
+        body: JSON.stringify({important:true})});
+    } else if (view === "myday") {
+      await api(`/tasks/${id}/myday`, {method:"POST",
+        body: JSON.stringify({on:true})});
+    } else if (view === "all") {
+      const lid = Number(curListId()) || null;
+      if (lid) await api(`/tasks/${id}/list`, {method:"POST",
+        body: JSON.stringify({list_id: lid})});
+    }
+  }
   inp.value = "";
   load();
 }
@@ -1576,8 +1620,14 @@ function switchSection(sec) {
   // Phase 11.14: подсветка активного раздела в drawer'е.
   document.querySelectorAll('.drawer-item[data-go]').forEach(el =>
     el.classList.toggle("active", el.dataset.go === sec));
-  if (sec === "notes") loadNotes();
-  else load();
+  if (sec === "notes") {
+    // В заметках FAB всегда доступен (создать заметку), даже если до
+    // этого мы были в архиве задач, где FAB прятался (#15).
+    document.body.classList.remove("fab-hidden");
+    loadNotes();
+  } else {
+    load();
+  }
 }
 
 // Phase 11.14: drawer-навигация. Кнопка ≡ открывает; backdrop и ✕ закрывают.
