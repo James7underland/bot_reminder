@@ -2590,3 +2590,35 @@ def test_scheduler_ignores_note_reminders():
         assert note_msgs == []                 # для заметки – ничего
     finally:
         config_mod.ALLOWED_USER_IDS = save_ids
+
+
+def test_db_complete_clears_deadline_reminder_importance():
+    """Phase 11.23 (#5): выполнение сбрасывает срок/напоминание/важность
+    и фиксирует время выполнения; возврат в активные не «выстреливает»
+    старым (просроченным) напоминанием/просрочкой."""
+    from database import (
+        add_task,
+        complete_task,
+        get_due_reminders,
+        get_overdue_tasks,
+        get_task,
+        mark_task_undone,
+        set_deadline,
+        set_important,
+        set_reminder_at,
+    )
+    tid = add_task(7100, "task")
+    set_deadline(tid, "2020-01-01 00:00:00")
+    set_reminder_at(tid, "2020-01-01 00:00:00")
+    set_important(tid, True)
+    complete_task(tid)
+    t = get_task(tid)
+    assert t["completed"] is True
+    assert t["completed_at"]          # время выполнения зафиксировано
+    assert t["deadline"] is None
+    assert t["reminder_at"] is None
+    assert t["important"] is False
+    # Возврат в активные — и НИКАКИХ просроченных уведомлений (был баг).
+    mark_task_undone(tid)
+    assert get_due_reminders("2026-01-01 00:00:00") == []
+    assert get_overdue_tasks("2026-01-01 00:00:00") == []

@@ -813,8 +813,15 @@ def complete_task(task_id: int) -> dict | None:
         return None
 
     # Phase 11.22 (#12): фиксируем время выполнения (UTC) – показываем в архиве.
+    # Phase 11.23 (#5): при попадании в архив сбрасываем срок, напоминание
+    # и важность. Иначе при возврате задачи в активные «выстреливало» бы
+    # старое (просроченное) напоминание/просрочка. Флаги *_notified тоже
+    # сбрасываем, чтобы состояние было чистым. Рекуррентность читается из
+    # `row` (снимок до UPDATE), поэтому следующий экземпляр не теряется.
     cursor.execute(
-        "UPDATE tasks SET completed = 1, completed_at = ? WHERE id = ?",
+        "UPDATE tasks SET completed = 1, completed_at = ?, "
+        "deadline = NULL, reminder_at = NULL, important = 0, "
+        "reminder_sent = 0, overdue_notified = 0 WHERE id = ?",
         (_utc_now_str(), task_id),
     )
 
