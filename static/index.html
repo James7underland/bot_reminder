@@ -433,6 +433,9 @@
     <button id="bulkStar" title="Важные" data-icon="star"></button>
     <button id="bulkUnstar" title="Снять «важно»" data-icon="star-off"></button>
     <button id="bulkMove" title="В список…" data-icon="folder"></button>
+    <!-- Phase 11.23 (#3): в архиве показываем только «Вернуть» (снять
+         выполнение → задача обратно в активные). -->
+    <button id="bulkReturn" class="bulk-return" title="Вернуть в активные">Вернуть</button>
   </div>
   <ul id="list"></ul>
   <div id="empty" class="empty-state" hidden></div>
@@ -801,7 +804,23 @@ function saveUI(patch) {
 const _UI = loadUI();
 let listId = _UI.listId || "all";
 
+// `fmt` – сериализация для API: datetime-local 'YYYY-MM-DDTHH:MM' →
+// 'YYYY-MM-DD HH:MM' (бэкенд ждёт ISO-подобный формат, добавляет :00).
 function fmt(dt){ return dt ? dt.replace("T"," ").slice(0,16) : ""; }
+
+// Phase 11.23 (#4): ОТОБРАЖЕНИЕ дат — день.месяц.год [часы:минуты].
+// Принимает уже локальную строку 'YYYY-MM-DD[ T]HH:MM[:SS]' (срок/
+// напоминание/выполнение приходят с бэкенда в часовом поясе юзера, #10).
+// Никакой tz-математики — только переformat строки, иначе двойная
+// конвертация.
+function fmtDisp(s){
+  if(!s) return "";
+  const m = String(s).replace("T"," ")
+    .match(/^(\d{4})-(\d{2})-(\d{2})(?:[ ](\d{2}:\d{2}))?/);
+  if(!m) return String(s);
+  const [, y, mo, d, hm] = m;
+  return `${d}.${mo}.${y}` + (hm ? ` ${hm}` : "");
+}
 function toInput(s){ return s ? s.slice(0,16).replace(" ","T") : ""; }
 
 let LISTS = [];
@@ -873,6 +892,7 @@ async function load(){
   const addBar = $("#newTask").closest(".bar");
   if (addBar) addBar.style.display = inArchive ? "none" : "";
   document.body.classList.toggle("fab-hidden", inArchive);
+  _updateTitle();   // Phase 11.23 (#2): заголовок = текущий раздел
   if (sq) {
     tasks = await api("/tasks?search=" + encodeURIComponent(sq));
   } else if (view === "myday") {
@@ -911,10 +931,23 @@ async function load(){
     !$("#sortSel").value;
   if (dragEnabled) attachDragDrop(ul);
   refreshStats(view, tasks);
-  // Phase 11.4: после повторного рендера восстанавливаем подсветку
-  // выделенных задач (id могут переехать в смежных тасках при
-  // редактировании, но базово set остаётся в силе).
-  if (selectMode) refreshSelectionUI();
+  // Phase 11.23 (#6): сверяем выделение с реально отрисованными
+  // задачами. Устаревшие id (выполнены/перемещены/из другого вида)
+  // выкидываем – иначе счётчик показывает «фантомные» выбранные, а
+  // кнопка отмены будто «не работает». Если не осталось ни одной –
+  // выходим из режима выделения.
+  if (selectMode) {
+    const present = new Set(tasks.map(t => t.id));
+    for (const id of [...selectedIds]) {
+      if (!present.has(id)) selectedIds.delete(id);
+    }
+    if (selectedIds.size === 0) {
+      exitSelectMode();
+    } else {
+      _applyBulkBarMode();
+      refreshSelectionUI();
+    }
+  }
 }
 
 // Phase 10.8: маленький значок в шапке. Обновляется после load() и
@@ -956,7 +989,7 @@ $("#statsBadge").onclick = async () => {
   // или собственный модал? Сделаем простой текст через uiAlert,
   // содержательный.
   const fmtAge = s.oldest_open_at
-    ? new Date(s.oldest_open_at.replace(" ", "T") + "Z").toLocaleDateString()
+    ? new Date(s.oldest_open_at.replace(" ", "T") + "Z").toLocaleDateString("ru-RU")
     : "–";
   await uiAlert(
     `Активных задач: ${s.active}\n`
@@ -979,10 +1012,23 @@ function enterSelectMode(firstId) {
   if (firstId != null) selectedIds.add(firstId);
   document.body.classList.add("select-mode");
   $("#bulkBar").hidden = false;
+  _applyBulkBarMode();
   // Закрываем все открытые панели задач, чтобы не путались.
   document.querySelectorAll(".panel.open").forEach(p =>
     p.classList.remove("open"));
   refreshSelectionUI();
+}
+
+// Phase 11.23 (#3): в архиве доступно только «Вернуть»; в остальных
+// разделах – выполнить/важно/снять важно/в список.
+function _applyBulkBarMode() {
+  const isArchive = $("#viewSel").value === "archive";
+  for (const id of ["bulkDone","bulkStar","bulkUnstar","bulkMove"]) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = isArchive ? "none" : "";
+  }
+  const ret = document.getElementById("bulkReturn");
+  if (ret) ret.style.display = isArchive ? "" : "none";
 }
 
 function exitSelectMode() {
@@ -1021,6 +1067,8 @@ $("#bulkCancel").onclick = exitSelectMode;
 $("#bulkDone").onclick = () => bulkAction("complete");
 $("#bulkStar").onclick = () => bulkAction("star");
 $("#bulkUnstar").onclick = () => bulkAction("unstar");
+// Phase 11.23 (#3): «Вернуть» в архиве – снимает выполнение (uncomplete).
+$("#bulkReturn").onclick = () => bulkAction("uncomplete");
 $("#bulkMove").onclick = async () => {
   // Используем uiSelect (есть с Phase 10.5) для выбора списка.
   const opts = [{value: "0", label: "📭 Без списка"}].concat(
@@ -1215,11 +1263,11 @@ function row(t){
   // Phase 11.22 (#12): для выполненных показываем время выполнения
   // (уже в часовом поясе пользователя – конвертация на бэкенде, #10).
   if (t.completed && t.completed_at) {
-    meta.push("✓ выполнено " + fmt(t.completed_at));
+    meta.push("✓ выполнено " + fmtDisp(t.completed_at));
   }
-  if (t.deadline) meta.push("срок " + fmt(t.deadline) +
+  if (t.deadline) meta.push("срок " + fmtDisp(t.deadline) +
       (t.overdue ? " (просрочено)" : ""));
-  if (t.reminder_at) meta.push("напомню " + fmt(t.reminder_at));
+  if (t.reminder_at) meta.push("напомню " + fmtDisp(t.reminder_at));
   if (t.recurrence) meta.push("повтор: " + t.recurrence);
   if (t.myday_date) meta.push("в «Мой день»");
   if (t.steps_total) meta.push("📋 " + t.steps_done + "/" + t.steps_total);
@@ -1623,12 +1671,36 @@ const NOTE_COLORS = [
 
 let _section = _UI.section || "tasks";
 
+// Phase 11.23 (#2): заголовок в шапке = название текущего раздела
+// (Важно / Мой день / Запланировано / Архив / имя списка / Все задачи /
+// Заметки), а не всегда «Мои задачи».
+function _updateTitle() {
+  const el = $("#appTitle");
+  if (!el) return;
+  if (_section === "notes") { el.textContent = "Заметки"; return; }
+  const view = $("#viewSel").value;
+  const named = {myday: "Мой день", planned: "Запланировано",
+                 important: "Важно", archive: "Архив"};
+  if (named[view]) { el.textContent = named[view]; return; }
+  // view === "all": конкретный список, «без списка» или все задачи.
+  if (/^\d+$/.test(listId)) {
+    const l = LISTS.find(x => String(x.id) === String(listId));
+    el.textContent = l ? l.name : "Список";
+  } else if (listId === "0") {
+    el.textContent = "Без списка";
+  } else {
+    el.textContent = "Все задачи";
+  }
+}
+
 function switchSection(sec) {
   _section = sec;
   saveUI({section: sec});
   $("#tasksSection").hidden = sec !== "tasks";
   $("#notesSection").hidden = sec !== "notes";
-  $("#appTitle").textContent = sec === "tasks" ? "Мои задачи" : "Мои заметки";
+  // Phase 11.23 (#6): смена раздела сбрасывает выделение задач.
+  if (selectMode) exitSelectMode();
+  _updateTitle();
   // Phase 11.14: подсветка активного раздела в drawer'е.
   document.querySelectorAll('.drawer-item[data-go]').forEach(el =>
     el.classList.toggle("active", el.dataset.go === sec));
@@ -1926,8 +1998,13 @@ function noteCard(n) {
 function shortDate(s) {
   if (!s) return "";
   try {
+    // Phase 11.23 (#4): день.месяц.год, часы:минуты (locale ru-RU
+    // фиксирует порядок DD.MM.YYYY независимо от устройства).
     const d = new Date(s.replace(" ", "T") + "Z");
-    return d.toLocaleString(undefined, {dateStyle:"short", timeStyle:"short"});
+    return d.toLocaleString("ru-RU", {
+      day: "2-digit", month: "2-digit", year: "numeric",
+      hour: "2-digit", minute: "2-digit",
+    });
   } catch { return s; }
 }
 
