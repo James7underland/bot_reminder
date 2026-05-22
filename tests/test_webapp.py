@@ -2460,6 +2460,87 @@ def test_api_archive_endpoint(client):
     assert client.get("/api/archive").status_code == 401
 
 
+# --- Phase 11.22 PR2: completed_at (#12) + tz-отображение (#10) ---
+
+def test_db_completed_at_set_and_cleared():
+    """Phase 11.22 (#12): время выполнения ставится и снимается."""
+    from database import add_task, complete_task, get_task, mark_task_undone
+    a = add_task(7000, "x")
+    assert get_task(a)["completed_at"] is None
+    complete_task(a)
+    ts = get_task(a)["completed_at"]
+    assert ts and len(ts) == 19      # 'YYYY-MM-DD HH:MM:SS'
+    mark_task_undone(a)              # возврат в активные
+    assert get_task(a)["completed_at"] is None
+
+
+def test_db_bulk_uncomplete_clears_completed_at():
+    """Phase 11.22 (#12): bulk-uncomplete тоже снимает время выполнения."""
+    from database import (
+        add_task,
+        bulk_update_tasks,
+        complete_task,
+        get_task,
+    )
+    a = add_task(7001, "a")
+    complete_task(a)
+    assert get_task(a)["completed_at"] is not None
+    bulk_update_tasks(7001, [a], "uncomplete")
+    assert get_task(a)["completed_at"] is None
+
+
+def test_decorate_converts_times_to_local_tz():
+    """Phase 11.22 (#10): _decorate переводит UTC-поля в часовой пояс."""
+    from webapp import _decorate
+    task = {
+        "id": 1, "completed": False,
+        "deadline": "2026-01-01 10:00:00",
+        "reminder_at": "2026-01-01 09:00:00",
+        "completed_at": None,
+    }
+    out = _decorate(dict(task), "2026-01-01 00:00:00", tz="Europe/Moscow")
+    # МСК = UTC+3.
+    assert out["deadline"] == "2026-01-01 13:00:00"
+    assert out["reminder_at"] == "2026-01-01 12:00:00"
+    # overdue считается ДО конвертации, в UTC: 10:00 не < 00:00 → не просрочено.
+    assert out["overdue"] is False
+    # UTC-зона — без изменений.
+    out_utc = _decorate(dict(task), "2026-01-01 00:00:00", tz="UTC")
+    assert out_utc["deadline"] == "2026-01-01 10:00:00"
+
+
+def test_api_deadline_roundtrips_in_local_tz(client):
+    """Phase 11.22 (#10): локальный ввод срока возвращается тем же локальным."""
+    from database import set_timezone
+    set_timezone(42, "Europe/Moscow")
+    tid = client.post(
+        "/api/tasks",
+        json={"description": "x", "deadline": "2026-03-10 15:30"},
+        headers=hdr(),
+    ).json()["id"]
+    tasks = client.get("/api/tasks", headers=hdr()).json()
+    t = next(x for x in tasks if x["id"] == tid)
+    # Введённое МСК-время возвращается тем же (UTC внутри, локаль снаружи).
+    assert t["deadline"] == "2026-03-10 15:30:00"
+
+
+def test_api_archive_completed_at_local_tz(client):
+    """Phase 11.22 (#10+#12): completed_at в архиве — в часовом поясе юзера."""
+    from database import get_task, set_timezone
+    from tzutil import to_local
+    set_timezone(42, "Europe/Moscow")
+    tid = client.post(
+        "/api/tasks", json={"description": "done"}, headers=hdr()
+    ).json()["id"]
+    client.post(f"/api/tasks/{tid}/complete", headers=hdr())
+    raw = get_task(tid)["completed_at"]          # UTC (без конвертации)
+    arch = client.get("/api/archive", headers=hdr()).json()
+    shown = next(t for t in arch if t["id"] == tid)["completed_at"]
+    assert raw and shown
+    assert shown != raw                          # конвертация применена
+    assert shown == to_local(raw, "Europe/Moscow")
+
+
 # --- Phase 11.19: напоминания для заметок ---
 
 def test_db_set_note_reminder_and_query_due():

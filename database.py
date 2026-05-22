@@ -36,6 +36,12 @@ def get_connection():
     conn.execute("PRAGMA busy_timeout = 5000")
     return conn
 
+
+def _utc_now_str() -> str:
+    """Текущее UTC-время как наивная строка 'YYYY-MM-DD HH:MM:SS'."""
+    return datetime.now(UTC).replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
+
+
 def init_db():
     """Создаёт таблицу tasks и применяет миграции (идемпотентно)."""
     conn = get_connection()
@@ -60,7 +66,8 @@ def init_db():
             overdue_notified INTEGER NOT NULL DEFAULT 0,
             order_index INTEGER,
             note_id INTEGER,
-            deleted_at TEXT
+            deleted_at TEXT,
+            completed_at TEXT
         )
     ''')
     cursor.execute('''
@@ -138,6 +145,9 @@ def init_db():
     # Фаза 11.10: soft-delete для задач (с поддержкой undo).
     if "deleted_at" not in columns:
         cursor.execute("ALTER TABLE tasks ADD COLUMN deleted_at TEXT")
+    # Phase 11.22 (#12): время выполнения задачи (UTC) — показываем в архиве.
+    if "completed_at" not in columns:
+        cursor.execute("ALTER TABLE tasks ADD COLUMN completed_at TEXT")
     # Фаза 9.5: цвет списка (визуальная подсказка в Mini App).
     list_columns = {row[1] for row in cursor.execute("PRAGMA table_info(lists)")}
     if "color" not in list_columns:
@@ -274,7 +284,11 @@ def mark_task_done(task_id: int) -> bool:
     """
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute('UPDATE tasks SET completed = 1 WHERE id = ?', (task_id,))
+    # Phase 11.22 (#12): фиксируем время выполнения (UTC).
+    cursor.execute(
+        "UPDATE tasks SET completed = 1, completed_at = ? WHERE id = ?",
+        (_utc_now_str(), task_id),
+    )
     rows_affected = cursor.rowcount
     conn.commit()
     conn.close()
@@ -372,7 +386,11 @@ def mark_task_undone(task_id: int) -> bool:
     """Возвращает задачу в активные (completed=0). False, если задачи нет."""
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("UPDATE tasks SET completed = 0 WHERE id = ?", (task_id,))
+    # Phase 11.22 (#12): снимаем отметку времени выполнения.
+    cursor.execute(
+        "UPDATE tasks SET completed = 0, completed_at = NULL WHERE id = ?",
+        (task_id,),
+    )
     rows_affected = cursor.rowcount
     conn.commit()
     conn.close()
@@ -794,7 +812,11 @@ def complete_task(task_id: int) -> dict | None:
         logger.warning("complete_task: task=%s not found", task_id)
         return None
 
-    cursor.execute("UPDATE tasks SET completed = 1 WHERE id = ?", (task_id,))
+    # Phase 11.22 (#12): фиксируем время выполнения (UTC) — показываем в архиве.
+    cursor.execute(
+        "UPDATE tasks SET completed = 1, completed_at = ? WHERE id = ?",
+        (_utc_now_str(), task_id),
+    )
 
     recurred = False
     next_due = None
@@ -1573,7 +1595,8 @@ def bulk_update_tasks(
         sql_assign = "list_id = ?"
         params: list = [list_id]
     elif action == "uncomplete":
-        sql_assign = "completed = 0"
+        # Phase 11.22 (#12): возврат в активные снимает время выполнения.
+        sql_assign = "completed = 0, completed_at = NULL"
         params = []
     elif action == "star":
         sql_assign = "important = 1"
@@ -1723,7 +1746,7 @@ _EXPORT_TASK_FIELDS = (
     "description", "due_date", "completed", "created_at",
     "reminder_sent", "recurrence", "important", "notes", "myday_date",
     "remind_before", "deadline", "reminder_at", "overdue_notified",
-    "order_index",
+    "order_index", "completed_at",
 )
 
 
@@ -1918,8 +1941,9 @@ def import_user_data(
                 "INSERT INTO tasks (user_id, description, due_date, "
                 "completed, created_at, reminder_sent, list_id, "
                 "recurrence, important, notes, myday_date, remind_before, "
-                "deadline, reminder_at, overdue_notified, order_index) "
-                "VALUES (?,?,?,?,COALESCE(?, CURRENT_TIMESTAMP),?,?,?,?,?,?,?,?,?,?,?)",
+                "deadline, reminder_at, overdue_notified, order_index, "
+                "completed_at) "
+                "VALUES (?,?,?,?,COALESCE(?, CURRENT_TIMESTAMP),?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     user_id, description, t.get("due_date"),
                     1 if t.get("completed") else 0, t.get("created_at"),
@@ -1929,6 +1953,7 @@ def import_user_data(
                     t.get("myday_date"), t.get("remind_before"),
                     t.get("deadline"), t.get("reminder_at"),
                     1 if t.get("overdue_notified") else 0, new_order,
+                    t.get("completed_at"),
                 ),
             )
             new_task_id = cursor.lastrowid

@@ -179,6 +179,16 @@ def _to_utc_or_none(value: str | None, user_id: int) -> str | None:
     return to_utc(v, get_timezone(user_id))
 
 
+def _to_local_or_none(value: str | None, tz: str) -> str | None:
+    """UTC-строка → локальное время пользователя (для отображения, #10)."""
+    if not value:
+        return None
+    v = value.strip()
+    if len(v) == 16:  # без секунд — на всякий случай
+        v += ":00"
+    return to_local(v, tz)
+
+
 def _today_local(user_id: int) -> str:
     """Сегодняшняя дата в часовом поясе пользователя ('YYYY-MM-DD')."""
     return to_local(_now_utc(), get_timezone(user_id))[:10]
@@ -188,12 +198,18 @@ def _decorate(
     task: dict,
     now: str,
     counts: dict[int, dict[str, int]] | None = None,
+    tz: str | None = None,
 ) -> dict:
     """
     Декорирует задачу служебными полями для UI:
     - `overdue` — срок прошёл и задача активна.
     - `steps_done`/`steps_total` — счётчики подзадач (только если
       `counts` передан и задача в нём есть; иначе оба 0).
+
+    Phase 11.22 (#10): временные поля (`deadline`, `reminder_at`,
+    `completed_at`) конвертируются из UTC в часовой пояс пользователя
+    `tz` — Mini App показывает и редактирует локальное время. `overdue`
+    считается ДО конвертации (обе границы — в UTC).
     """
     dl = task.get("deadline")
     task["overdue"] = bool(
@@ -202,7 +218,25 @@ def _decorate(
     c = (counts or {}).get(task["id"], {"done": 0, "total": 0})
     task["steps_done"] = c["done"]
     task["steps_total"] = c["total"]
+    if tz and tz != "UTC":
+        for field in ("deadline", "reminder_at", "completed_at"):
+            v = task.get(field)
+            if v:
+                task[field] = _to_local_or_none(v, tz)
     return task
+
+
+def _decorate_many(tasks: list[dict], user_id: int) -> list[dict]:
+    """Декорирует список задач: `now`/`counts`/`tz` считаются один раз."""
+    now = _now_utc()
+    counts = get_steps_counts(user_id)
+    tz = get_timezone(user_id)
+    return [_decorate(t, now, counts, tz) for t in tasks]
+
+
+def _decorate_one(task: dict, user_id: int) -> dict:
+    """Декорирует одну задачу (ответ POST/PATCH) с конвертацией в tz (#10)."""
+    return _decorate(task, _now_utc(), tz=get_timezone(user_id))
 
 
 def _require_own_task(
@@ -384,9 +418,7 @@ async def api_tasks(
     else:
         real = None if list_id == 0 else list_id
         tasks = get_tasks_by_list(user_id, real, completed=completed)
-    now = _now_utc()
-    counts = get_steps_counts(user_id)
-    return [_decorate(t, now, counts) for t in tasks]
+    return _decorate_many(tasks, user_id)
 
 
 @app.post("/api/tasks")
@@ -401,7 +433,7 @@ async def api_create_task(
         set_deadline(task_id, _to_utc_or_none(body.deadline, user_id))
     if body.reminder_at:
         set_reminder_at(task_id, _to_utc_or_none(body.reminder_at, user_id))
-    return _decorate(get_task(task_id), _now_utc())
+    return _decorate_one(get_task(task_id), user_id)
 
 
 @app.post("/api/tasks/{task_id}/complete")
@@ -488,7 +520,7 @@ async def api_patch_task(
         # Заметка должна быть своя и не удалённая.
         _require_own_note(user_id, body.note_id)
         set_task_note(task_id, body.note_id)
-    return _decorate(get_task(task_id), _now_utc())
+    return _decorate_one(get_task(task_id), user_id)
 
 
 def _require_step(user_id: int, task_id: int, step_id: int) -> None:
@@ -543,25 +575,19 @@ async def api_delete_step(
 @app.get("/api/myday")
 async def api_myday(user_id: int = Depends(current_user_id)) -> list[dict]:
     tasks = get_myday(user_id, _today_local(user_id))
-    now = _now_utc()
-    counts = get_steps_counts(user_id)
-    return [_decorate(t, now, counts) for t in tasks]
+    return _decorate_many(tasks, user_id)
 
 
 @app.get("/api/planned")
 async def api_planned(user_id: int = Depends(current_user_id)) -> list[dict]:
-    now = _now_utc()
-    counts = get_steps_counts(user_id)
-    return [_decorate(t, now, counts) for t in get_planned(user_id)]
+    return _decorate_many(get_planned(user_id), user_id)
 
 
 @app.get("/api/important")
 async def api_important(
     user_id: int = Depends(current_user_id),
 ) -> list[dict]:
-    now = _now_utc()
-    counts = get_steps_counts(user_id)
-    return [_decorate(t, now, counts) for t in get_important_tasks(user_id)]
+    return _decorate_many(get_important_tasks(user_id), user_id)
 
 
 @app.get("/api/archive")
@@ -569,9 +595,7 @@ async def api_archive(
     user_id: int = Depends(current_user_id),
 ) -> list[dict]:
     """Phase 11.11: выполненные задачи (новейшие сверху)."""
-    now = _now_utc()
-    counts = get_steps_counts(user_id)
-    return [_decorate(t, now, counts) for t in get_archived_tasks(user_id)]
+    return _decorate_many(get_archived_tasks(user_id), user_id)
 
 
 @app.post("/api/tasks/{task_id}/myday")
@@ -585,7 +609,7 @@ async def api_toggle_myday(
         add_to_myday(task_id, _today_local(user_id))
     else:
         remove_from_myday(task_id)
-    return _decorate(get_task(task_id), _now_utc())
+    return _decorate_one(get_task(task_id), user_id)
 
 
 @app.post("/api/tasks/{task_id}/snooze")
@@ -598,7 +622,7 @@ async def api_snooze(
     if body.minutes <= 0:
         raise HTTPException(status_code=422, detail="minutes must be > 0")
     snooze_reminder(task_id, body.minutes)
-    return _decorate(get_task(task_id), _now_utc())
+    return _decorate_one(get_task(task_id), user_id)
 
 
 @app.post("/api/tasks/{task_id}/move-up")
@@ -854,7 +878,7 @@ async def api_move_task(
     if target is not None:
         _require_own_list(user_id, target)
     assign_task_to_list(task_id, target)
-    return _decorate(get_task(task_id), _now_utc())
+    return _decorate_one(get_task(task_id), user_id)
 
 
 @app.get("/api/stats")
