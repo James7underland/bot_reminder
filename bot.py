@@ -21,7 +21,6 @@ from telegram import (
 )
 from telegram.ext import (
     Application,
-    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -29,12 +28,7 @@ from telegram.ext import (
 )
 
 from config import MINI_APP_URL, TELEGRAM_BOT_TOKEN, is_user_allowed
-from database import (
-    complete_task,
-    get_task,
-    init_db,
-    snooze_reminder,
-)
+from database import init_db
 from logsetup import setup_logging
 from scheduler import setup_scheduler
 
@@ -167,69 +161,6 @@ async def error_handler(
     )
 
 
-# --- Phase 11.7: callback-кнопки в уведомлениях о напоминании ---
-
-async def reminder_callback(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
-    """
-    Обрабатывает inline-кнопки из уведомлений о напоминании.
-    Форматы callback_data:
-      `snz:<task_id>:<minutes>`
-      `done:<task_id>`
-    Whitelist-проверка (Phase 11.3): только владельцу задачи можно её
-    дёрнуть. Не свой / не наша callback_data → silent answer.
-    """
-    q = update.callback_query
-    if q is None or not q.data:
-        return
-    try:
-        await q.answer()    # убирает «часики» на кнопке
-    except Exception:
-        pass
-    if not _user_allowed(update):
-        return
-    user_id = update.effective_user.id if update.effective_user else None
-    data = q.data
-    if data.startswith("snz:"):
-        try:
-            _, tid_s, mins_s = data.split(":")
-            tid = int(tid_s)
-            mins = int(mins_s)
-        except ValueError:
-            return
-        task = get_task(tid)
-        if task is None or task["user_id"] != user_id:
-            return
-        if snooze_reminder(tid, mins):
-            try:
-                await q.edit_message_text(
-                    f"⏰ Отложено на {mins} мин: {task['description']}",
-                )
-            except Exception:
-                pass
-        return
-    if data.startswith("done:"):
-        try:
-            tid = int(data.split(":")[1])
-        except (IndexError, ValueError):
-            return
-        task = get_task(tid)
-        if task is None or task["user_id"] != user_id:
-            return
-        result = complete_task(tid)
-        if result is None:
-            return
-        text = f"✓ Выполнено: {task['description']}"
-        if result.get("recurred"):
-            text += f"\n↻ Следующее: {result['next_due']}"
-        try:
-            await q.edit_message_text(text)
-        except Exception:
-            pass
-        return
-
-
 # --- Запуск (исключён из coverage, требует Telegram-сети) ---
 
 # Phase 11.11: команды, которые Telegram показывает в `/`-автокомплите.
@@ -278,10 +209,6 @@ def main() -> None:  # pragma: no cover
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", start))
-    # Phase 11.7: callback-кнопки в уведомлениях (snooze/done).
-    application.add_handler(
-        CallbackQueryHandler(reminder_callback, pattern=r"^(snz|done):")
-    )
     # Любой не-командный текст / голос / фото / документ → fallback.
     application.add_handler(
         MessageHandler(filters.ALL & ~filters.COMMAND, fallback_text)

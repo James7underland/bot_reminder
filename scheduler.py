@@ -9,7 +9,6 @@ import logging
 from datetime import UTC, datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 import config
 from config import SCHEDULER_CHECK_INTERVAL
@@ -28,27 +27,12 @@ logger = logging.getLogger(__name__)
 _TIME_FMT = "%Y-%m-%d %H:%M:%S"
 
 
-def _reminder_keyboard(task_id: int) -> InlineKeyboardMarkup:
-    """
-    Phase 11.7: кнопки прямо в уведомлении: +15 мин, +1 ч, ✓ Готово.
-    Callback-data – короткие токены `snz:<id>:<minutes>` и
-    `done:<id>` (Telegram ограничивает payload 64 байтами).
-    """
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton("+15м", callback_data=f"snz:{task_id}:15"),
-        InlineKeyboardButton("+1ч", callback_data=f"snz:{task_id}:60"),
-        InlineKeyboardButton("✓ Готово", callback_data=f"done:{task_id}"),
-    ]])
-
-
 def _task_text(item) -> str:
     """Текст уведомления для задачи: `описание`."""
     return str(item.get("description") or "")
 
 
-async def _notify(bot, items, prefix, mark, *,
-                  with_buttons: bool = True,
-                  text_for=_task_text) -> int:
+async def _notify(bot, items, prefix, mark, *, text_for=_task_text) -> int:
     """Шлёт `prefix: текст(item)` каждому элементу; помечает успешные.
 
     Анти-дубль: успех → `mark(item.id)`. Ошибка → НЕ помечаем (повтор
@@ -56,9 +40,8 @@ async def _notify(bot, items, prefix, mark, *,
 
     Phase 11.3: ALLOWED_USER_IDS фильтрует чужие user_id (с пометкой как
     sent, чтобы не вызывать flood-stop).
-    Phase 11.7: snooze-кнопки прикладываются при `with_buttons=True`.
-    Phase 11.19: `text_for` позволяет повторно использовать _notify
-    для заметок (title/body вместо description) и для других сущностей.
+    Phase 11.23 (#7): уведомления приходят простым текстом, без кнопок
+    +15/+1ч/Готово – управление переносом/выполнением только в Mini App.
     """
     allowed_ids = config.ALLOWED_USER_IDS
     sent = 0
@@ -67,13 +50,9 @@ async def _notify(bot, items, prefix, mark, *,
             mark(item["id"])
             continue
         try:
-            kw = {}
-            if with_buttons:
-                kw["reply_markup"] = _reminder_keyboard(item["id"])
             await bot.send_message(
                 chat_id=item["user_id"],
                 text=f"{prefix}: {text_for(item)}",
-                **kw,
             )
         except Exception as e:
             logger.error("notify failed item=%s: %s", item["id"], e)
