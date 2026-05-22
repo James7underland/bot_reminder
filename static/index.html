@@ -133,10 +133,6 @@
   header{padding:10px 8px 6px;font-size:20px;font-weight:700;
     display:flex;align-items:center;gap:4px;
     border-bottom:1px solid rgba(127,127,127,.12)}
-  /* Phase 11.23 (#1): в полноэкранном режиме (Bot API 8.0) контент
-     уезжает под статус-бар/чёлку — сдвигаем шапку на безопасную зону. */
-  body.tg-fullscreen header{
-    padding-top:calc(10px + var(--tg-safe-area-inset-top, env(safe-area-inset-top, 0px)));}
   header h1{flex:1;margin:0;font-size:inherit;font-weight:inherit;
     padding-left:4px}
   .stats-badge{font-size:13px;font-weight:500;color:var(--hint);
@@ -350,9 +346,6 @@
   <button id="navBtn" class="icon-btn" title="Меню" data-icon="menu"></button>
   <h1 id="appTitle">Мои задачи</h1>
   <div id="statsBadge" class="stats-badge" hidden title="Статистика">…</div>
-  <!-- Phase 11.23 (#1): кнопка fullscreen (Bot API 8.0). Скрыта, пока
-       не убедимся, что клиент поддерживает requestFullscreen. -->
-  <button id="fsBtn" class="icon-btn" title="На весь экран" data-icon="maximize" hidden></button>
   <button id="moreBtn" class="icon-btn" title="Ещё" data-icon="more"></button>
 </header>
 
@@ -539,10 +532,8 @@ const IS_DESKTOP = tg
   ? DESKTOP_PLATFORMS.has((tg.platform || "").toLowerCase())
   : false;
 
-// Phase 11.23 (#1): fullscreen возвращаем через нативный Bot API 8.0
-// (tg.requestFullscreen/exitFullscreen + события fullscreenChanged/
-// fullscreenFailed). Это единственный поддерживаемый способ развернуть
-// Mini App; на старых клиентах кнопка просто прячется.
+// Mini App: tg.ready()/expand() + body-класс is-desktop/is-mobile.
+// Кнопку «на весь экран» убрали по просьбе пользователя (Phase 11.24).
 function _setupWindowMode() {
   if (!tg) return;
   tg.ready();
@@ -550,48 +541,6 @@ function _setupWindowMode() {
   if (IS_DESKTOP) {
     try { tg.expand(); } catch {}
   }
-  _setupFullscreen();
-}
-
-function _setupFullscreen() {
-  const btn = document.getElementById("fsBtn");
-  if (!tg || !btn) return;
-  // requestFullscreen появился в Bot API 8.0. Без него — прячем кнопку.
-  const supported = typeof tg.requestFullscreen === "function" &&
-    (!tg.isVersionAtLeast || tg.isVersionAtLeast("8.0"));
-  if (!supported) { btn.hidden = true; return; }
-  btn.hidden = false;
-
-  function sync() {
-    const fs = !!tg.isFullscreen;
-    document.body.classList.toggle("tg-fullscreen", fs);
-    btn.dataset.icon = fs ? "minimize" : "maximize";
-    btn.title = fs ? "Свернуть" : "На весь экран";
-    applyIcons(btn.parentElement);   // dataset.icon изменился → перерисовать
-  }
-
-  btn.onclick = () => {
-    try {
-      if (tg.isFullscreen) tg.exitFullscreen();
-      else tg.requestFullscreen();
-    } catch {
-      uiToast("Полноэкранный режим недоступен на этом клиенте");
-    }
-  };
-
-  try { tg.onEvent("fullscreenChanged", sync); } catch {}
-  try {
-    tg.onEvent("fullscreenFailed", (e) => {
-      const reason = (e && e.error) || "UNKNOWN";
-      // ALREADY_FULLSCREEN — не ошибка; прочее (UNSUPPORTED) — поясняем.
-      if (reason !== "ALREADY_FULLSCREEN") {
-        uiToast("Не удалось развернуть на весь экран: " + reason);
-      }
-      sync();
-    });
-  } catch {}
-
-  sync();
 }
 _setupWindowMode();
 
