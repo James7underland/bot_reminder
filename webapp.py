@@ -1,7 +1,7 @@
 """
 HTTP API для Telegram Mini App (Фаза 8).
 
-`validate_init_data` — чистая, тестируемая проверка подписи Telegram
+`validate_init_data` – чистая, тестируемая проверка подписи Telegram
 WebApp `initData` (авторизация). FastAPI-приложение `app` раздаёт REST
 поверх функций `database`, фронтенд монтируется в Фазе 8.2.
 """
@@ -71,7 +71,6 @@ from database import (
     set_important,
     set_list_color,
     set_note,
-    set_note_reminder,
     set_recurrence,
     set_reminder_at,
     set_task_note,
@@ -94,10 +93,10 @@ def validate_init_data(init_data: str, bot_token: str) -> dict | None:
     Проверяет подпись Telegram WebApp `initData`.
 
     Возвращает dict пользователя (с `id`) при валидной подписи, иначе
-    None. Алгоритм — по докам Telegram: secret = HMAC_SHA256("WebAppData",
+    None. Алгоритм – по докам Telegram: secret = HMAC_SHA256("WebAppData",
     token); hash = HMAC_SHA256(secret, data_check_string).
 
-    Phase 11.3: при отказе пишем точечный WARNING с причиной — без
+    Phase 11.3: при отказе пишем точечный WARNING с причиной – без
     leak'а самих данных. Помогает понять, почему 401 (пусто, нет токена,
     битый hash, нет user, кривой JSON).
     """
@@ -106,7 +105,7 @@ def validate_init_data(init_data: str, bot_token: str) -> dict | None:
         return None
     if not bot_token:
         logger.warning(
-            "validate_init_data: TELEGRAM_BOT_TOKEN empty — "
+            "validate_init_data: TELEGRAM_BOT_TOKEN empty – "
             "сервер запущен без токена (.env не загружен?)"
         )
         return None
@@ -128,9 +127,9 @@ def validate_init_data(init_data: str, bot_token: str) -> dict | None:
         secret_key, data_check_string.encode(), hashlib.sha256
     ).hexdigest()
     if not hmac.compare_digest(calc_hash, received_hash):
-        # Без логирования сравниваемых хешей — это секреты по сути.
+        # Без логирования сравниваемых хешей – это секреты по сути.
         logger.warning(
-            "validate_init_data: hash mismatch — токен в .env "
+            "validate_init_data: hash mismatch – токен в .env "
             "не совпадает с тем, чем Telegram подписывает initData"
         )
         return None
@@ -148,7 +147,7 @@ def validate_init_data(init_data: str, bot_token: str) -> dict | None:
 async def current_user_id(x_init_data: str = Header(default="")) -> int:
     """
     FastAPI-зависимость: валидирует initData и проверяет allowlist
-    (Phase 11.3). 401 — если подпись битая ИЛИ пользователя нет в
+    (Phase 11.3). 401 – если подпись битая ИЛИ пользователя нет в
     allowlist.
     """
     user = validate_init_data(x_init_data, config.TELEGRAM_BOT_TOKEN or "")
@@ -184,7 +183,7 @@ def _to_local_or_none(value: str | None, tz: str) -> str | None:
     if not value:
         return None
     v = value.strip()
-    if len(v) == 16:  # без секунд — на всякий случай
+    if len(v) == 16:  # без секунд – на всякий случай
         v += ":00"
     return to_local(v, tz)
 
@@ -202,14 +201,14 @@ def _decorate(
 ) -> dict:
     """
     Декорирует задачу служебными полями для UI:
-    - `overdue` — срок прошёл и задача активна.
-    - `steps_done`/`steps_total` — счётчики подзадач (только если
+    - `overdue` – срок прошёл и задача активна.
+    - `steps_done`/`steps_total` – счётчики подзадач (только если
       `counts` передан и задача в нём есть; иначе оба 0).
 
     Phase 11.22 (#10): временные поля (`deadline`, `reminder_at`,
     `completed_at`) конвертируются из UTC в часовой пояс пользователя
-    `tz` — Mini App показывает и редактирует локальное время. `overdue`
-    считается ДО конвертации (обе границы — в UTC).
+    `tz` – Mini App показывает и редактирует локальное время. `overdue`
+    считается ДО конвертации (обе границы – в UTC).
     """
     dl = task.get("deadline")
     task["overdue"] = bool(
@@ -244,7 +243,7 @@ def _require_own_task(
 ) -> dict:
     """
     Phase 11.10: с soft-delete задач хелпер прячет удалённые от
-    обычных эндпоинтов (PATCH/complete/snooze/...) — иначе клиент
+    обычных эндпоинтов (PATCH/complete/snooze/...) – иначе клиент
     мог бы редактировать «удалённую» задачу из старого кеша. Только
     `delete_task` и `restore_task` достают её через прямой `get_task`.
     """
@@ -337,9 +336,6 @@ class NotePatch(BaseModel):
     pinned: bool | None = None
     color: str | None = None
     clear_title: bool = False
-    # Phase 11.19: напоминание для заметки (UTC после to_utc_or_none).
-    reminder_at: str | None = None
-    clear_reminder: bool = False
 
 
 _STARTED_AT = time.monotonic()
@@ -358,10 +354,10 @@ app = FastAPI(title="Reminder Mini App API", lifespan=_lifespan)
 async def healthz():
     """
     Расширенный healthcheck для внешнего мониторинга и `systemctl`:
-    - `ok`: True только если БД отвечает (SELECT 1) — иначе HTTP 503;
+    - `ok`: True только если БД отвечает (SELECT 1) – иначе HTTP 503;
     - `uptime_seconds`: с момента старта процесса (monotonic, не часы);
-    - сводные счётчики из `get_global_counts` — видно, что данные есть.
-    Эндпоинт без авторизации (initData не требуется) — чтобы
+    - сводные счётчики из `get_global_counts` – видно, что данные есть.
+    Эндпоинт без авторизации (initData не требуется) – чтобы
     балансировщик/Caddy/systemd-таймер могли пинговать его извне.
     """
     db_ok = db_ping()
@@ -672,8 +668,8 @@ async def api_bulk_tasks(
 ) -> dict:
     """
     Phase 11.4: пакетное действие над выбранными задачами.
-    `ids` — список id (фильтруется по `user_id`, чужие игнорируются).
-    `action` — complete | uncomplete | star | unstar | move.
+    `ids` – список id (фильтруется по `user_id`, чужие игнорируются).
+    `action` – complete | uncomplete | star | unstar | move.
     Для `move`: `list_id` (None или id своего активного списка).
     422 на неизвестный action / битый list_id.
     """
@@ -750,7 +746,7 @@ async def api_restore_list(
     Phase 10.7: восстанавливает soft-deleted список (окно отмены 24 ч).
     404 если списка нет (включая чужой) или он не был удалён. `_require_
     own_list` использует видимые списки → для проверки права смотрим
-    напрямую: в видимых нет, но в БД — есть у этого user_id и помечен
+    напрямую: в видимых нет, но в БД – есть у этого user_id и помечен
     deleted_at IS NOT NULL.
     """
     all_lists = {lst["id"]: lst
@@ -810,19 +806,7 @@ async def api_patch_note(
     user_id: int = Depends(current_user_id),
 ) -> dict:
     _require_own_note(user_id, note_id)
-    # Phase 11.19: напоминание для заметки обрабатывается отдельной
-    # функцией БД, потому что update_note этой колонки не знает.
-    reminder_touched = False
-    if body.clear_reminder:
-        set_note_reminder(note_id, None)
-        reminder_touched = True
-    elif body.reminder_at is not None:
-        utc = _to_utc_or_none(body.reminder_at, user_id)
-        set_note_reminder(note_id, utc)
-        reminder_touched = True
-    # Остальные поля — через update_note. Если ВСЁ изменение было
-    # только в напоминании, update_note вернёт False (ничего другого
-    # обновить), но это не ошибка — поэтому отдельно ловим.
+    # Phase 11.22 (#9): у заметок больше нет напоминаний.
     ok = update_note(
         note_id,
         title=body.title,
@@ -831,7 +815,7 @@ async def api_patch_note(
         color=body.color,
         clear_title=body.clear_title,
     )
-    if not ok and not reminder_touched:
+    if not ok:
         raise HTTPException(
             status_code=422,
             detail="nothing to update / empty body / bad color",
@@ -915,7 +899,7 @@ async def api_timezones(
 ) -> list[dict]:
     """
     Курируемый список общих часовых поясов с текущими смещениями
-    (Фаза 10.5). Авторизация требуется — endpoint не публичный, чтобы
+    (Фаза 10.5). Авторизация требуется – endpoint не публичный, чтобы
     не светить наличие сервиса посторонним.
     """
     return list_common_timezones()

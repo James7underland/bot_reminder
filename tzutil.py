@@ -7,7 +7,7 @@ _ZERO = timedelta(0)
 
 
 def valid_timezone(tz: str) -> bool:
-    """True, если `tz` — корректная IANA-зона."""
+    """True, если `tz` – корректная IANA-зона."""
     try:
         ZoneInfo(tz)
     except (ZoneInfoNotFoundError, ValueError):
@@ -31,13 +31,13 @@ def to_local(utc: str, tz: str) -> str:
 #
 # Пользователю нужен короткий список «человеческих» вариантов вместо
 # свободного ввода IANA-имени (`Europe/Moscow` помнят не все). Сгруппирован
-# по регионам/смещениям. Названия — на русском, IANA-id — машинный value.
+# по регионам/смещениям. Названия – на русском, IANA-id – машинный value.
 # Полные 600+ зон не выводим: 95% пользователей нужны крупные города
-# своего региона. Если нужного нет — пусть открывают часовой пояс через
+# своего региона. Если нужного нет – пусть открывают часовой пояс через
 # чат-бота (`/timezone <IANA>`) либо мы добавим по запросу.
 
 _COMMON_TIMEZONES: list[dict] = [
-    # Россия — от запада к востоку, по смещению.
+    # Россия – от запада к востоку, по смещению.
     {"tz": "Europe/Kaliningrad",      "label": "Калининград",      "group": "Россия"},
     {"tz": "Europe/Moscow",           "label": "Москва",           "group": "Россия"},
     {"tz": "Europe/Samara",           "label": "Самара",           "group": "Россия"},
@@ -113,7 +113,7 @@ def _format_offset(tz: str, now: datetime | None = None) -> str:
     """Текущее смещение `tz` от UTC в формате `UTC+03:00` / `UTC-05:00`."""
     ref = now or datetime.now(ZoneInfo("UTC"))
     # После `astimezone` datetime aware → utcoffset() возвращает timedelta
-    # (а не None — None бывает только у наивных datetime).
+    # (а не None – None бывает только у наивных datetime).
     offset = ref.astimezone(ZoneInfo(tz)).utcoffset() or _ZERO
     total = int(offset.total_seconds())
     sign = "+" if total >= 0 else "-"
@@ -126,7 +126,7 @@ def _format_offset(tz: str, now: datetime | None = None) -> str:
 def list_common_timezones() -> list[dict]:
     """
     Возвращает курируемый список с актуальными смещениями. Каждая
-    запись: `{tz, label, group, offset, offset_minutes}`. Сортировка —
+    запись: `{tz, label, group, offset, offset_minutes}`. Сортировка –
     по `offset_minutes` (с запада на восток), затем по label, чтобы UI
     отображал зоны в естественном порядке.
     """

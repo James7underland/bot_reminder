@@ -16,7 +16,7 @@ async def test_error_handler_logs_exception(caplog):
 
 
 def test_quiet_third_party_loggers_hides_token_logs():
-    # httpx на INFO печатает URL Telegram API с токеном — недопустимо.
+    # httpx на INFO печатает URL Telegram API с токеном – недопустимо.
     logging.getLogger("httpx").setLevel(logging.INFO)
     bot.quiet_third_party_loggers()
     for name in ("httpx", "httpcore", "apscheduler", "telegram"):
@@ -47,7 +47,7 @@ async def test_start_replies_with_webapp_button():
     u.effective_message.reply_text.assert_awaited_once()
     args, kwargs = u.effective_message.reply_text.call_args
     assert "Mini App" in args[0]
-    # reply_markup — InlineKeyboardMarkup с WebApp-кнопкой.
+    # reply_markup – InlineKeyboardMarkup с WebApp-кнопкой.
     kb = kwargs["reply_markup"]
     btn = kb.inline_keyboard[0][0]
     assert btn.web_app is not None and btn.web_app.url.startswith("https://")
@@ -228,7 +228,7 @@ async def test_callback_garbage_data_silent():
         u, q = _mk_callback_update(data)
         await bot.reminder_callback(u, MagicMock())
         # `answer` мог быть либо вызван, либо нет (если q.data пуст);
-        # главное — обработчик не упал и не отредактировал.
+        # главное – обработчик не упал и не отредактировал.
         q.edit_message_text.assert_not_awaited()
 
 
@@ -240,6 +240,6 @@ async def test_callback_denied_for_disallowed_user(monkeypatch):
     tid = add_task(42, "x")
     u, q = _mk_callback_update(f"done:{tid}", user_id=42)
     await bot.reminder_callback(u, MagicMock())
-    # whitelist отверг — задача не закрыта
+    # whitelist отверг – задача не закрыта
     assert get_task(tid)["completed"] is False
     q.edit_message_text.assert_not_awaited()

@@ -159,11 +159,11 @@ async def test_setup_scheduler_defers_start_to_post_init():
     with patch.object(scheduler, "AsyncIOScheduler", return_value=fake):
         result = scheduler.setup_scheduler(app)
     assert result is fake
-    # С Phase 10.7 — два job'а: reminders + purge_deleted.
+    # С Phase 10.7 – два job'а: reminders + purge_deleted.
     assert fake.add_job.call_count == 2
     job_ids = {call.kwargs.get("id") for call in fake.add_job.call_args_list}
     assert job_ids == {"reminders", "purge_deleted"}
-    # НЕ стартует синхронно — это и был прод-баг "no running event loop"
+    # НЕ стартует синхронно – это и был прод-баг "no running event loop"
     fake.start.assert_not_called()
     # старт/стоп навешаны на жизненный цикл приложения
     await app.post_init(app)
@@ -173,7 +173,7 @@ async def test_setup_scheduler_defers_start_to_post_init():
 
 
 def test_purge_job_wrapper_swallows_errors(monkeypatch, caplog):
-    """`_purge_old_soft_deletes` логирует ошибку, но НЕ кидает —
+    """`_purge_old_soft_deletes` логирует ошибку, но НЕ кидает –
     иначе APScheduler пометит job сломанным и в худшем случае
     перестанет запускать. Phase 11.2: и для lists, и для notes."""
     import scheduler as scheduler_mod

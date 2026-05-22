@@ -1,12 +1,12 @@
 """
 Главный модуль Telegram-бота.
 
-С Phase 11.1 бот не отвечает на команды (вся работа со списком —
+С Phase 11.1 бот не отвечает на команды (вся работа со списком –
 в Mini App). Сохранены только:
-- `/start` — приветствие с кнопкой запуска Mini App;
-- `/help` — то же сообщение (для пользователей, привыкших к /help);
-- авто-ответ на любое другое сообщение — «Используй Mini App ↓»;
-- планировщик `setup_scheduler` — рассылает напоминания и
+- `/start` – приветствие с кнопкой запуска Mini App;
+- `/help` – то же сообщение (для пользователей, привыкших к /help);
+- авто-ответ на любое другое сообщение – «Используй Mini App ↓»;
+- планировщик `setup_scheduler` – рассылает напоминания и
   уведомления о просрочке, физически чистит soft-deleted (Phase 10.7).
 """
 import logging
@@ -60,7 +60,7 @@ logger = logging.getLogger(__name__)
 
 def _miniapp_inline_keyboard() -> InlineKeyboardMarkup:
     """
-    Phase 11.3b: InlineKeyboardButton с `web_app=...` — единственный
+    Phase 11.3b: InlineKeyboardButton с `web_app=...` – единственный
     надёжный способ запустить Mini App из чата с передачей `initData`.
 
     ReplyKeyboard-кнопка (предыдущая попытка) на Telegram Desktop
@@ -76,7 +76,7 @@ def _miniapp_inline_keyboard() -> InlineKeyboardMarkup:
 
 _WELCOME_TEXT = (
     "Привет! Я бот-напоминалка.\n\n"
-    "Все задачи, списки и заметки — в Mini App. Нажми кнопку "
+    "Все задачи, списки и заметки – в Mini App. Нажми кнопку "
     "ниже или 📋 «Открыть» вверху чата, чтобы его запустить.\n\n"
     "Напоминания о задачах я буду присылать сюда автоматически."
 )
@@ -88,13 +88,13 @@ async def _ensure_chat_menu_button(context: ContextTypes.DEFAULT_TYPE,
     Phase 11.3b: программно задаём верхнюю кнопку «Открыть» (chat menu
     button) → MINI_APP_URL. Это та кнопка, которая видна слева от поля
     ввода. Она запускается без диалога и всегда передаёт initData.
-    Если уже установлена — `setChatMenuButton` всё равно идемпотентна.
+    Если уже установлена – `setChatMenuButton` всё равно идемпотентна.
     """
     try:
         await context.bot.set_chat_menu_button(
             chat_id=chat_id,
             menu_button=MenuButtonWebApp(
-                text="📋 Открыть",
+                text="Открыть",
                 web_app=WebAppInfo(url=MINI_APP_URL),
             ),
         )
@@ -111,11 +111,11 @@ def _user_allowed(update: Update) -> bool:
     return is_user_allowed(u.id, u.username)
 
 
-_DENIED_TEXT = "Доступ к этому боту ограничен. Если это ошибка — обратись к владельцу."
+_DENIED_TEXT = "Доступ к этому боту ограничен. Если это ошибка – обратись к владельцу."
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """`/start` и `/help` — одно и то же приветствие с WebApp-кнопкой."""
+    """`/start` и `/help` – одно и то же приветствие с WebApp-кнопкой."""
     if update.effective_message is None:
         return
     if not _user_allowed(update):
@@ -248,8 +248,26 @@ async def _set_my_commands(application) -> None:  # pragma: no cover
         logger.warning("set_my_commands failed: %s", e)
 
 
+async def _set_default_menu_button(application) -> None:  # pragma: no cover
+    """
+    Phase 11.22 (#1): глобальная кнопка-меню «Открыть» (Mini App) для
+    ВСЕХ чатов по умолчанию – видна сразу, ещё до /start (как у BotFather).
+    `set_chat_menu_button` без `chat_id` задаёт дефолт для всех
+    пользователей; per-chat вызов в `start()` остаётся как подстраховка.
+    """
+    try:
+        await application.bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(
+                text="Открыть",
+                web_app=WebAppInfo(url=MINI_APP_URL),
+            ),
+        )
+    except Exception as e:
+        logger.warning("set default chat menu button failed: %s", e)
+
+
 def main() -> None:  # pragma: no cover
-    """Запускает бота (сетевой polling — вне unit-тестов)."""
+    """Запускает бота (сетевой polling – вне unit-тестов)."""
     if not TELEGRAM_BOT_TOKEN:
         raise SystemExit(
             "TELEGRAM_BOT_TOKEN не задан. Скопируйте .env.example в .env "
@@ -271,13 +289,14 @@ def main() -> None:  # pragma: no cover
     application.add_error_handler(error_handler)
 
     # Планировщик: напоминания + purge soft-deleted списков (Phase 10.7).
-    # setup_scheduler регистрирует post_init/post_shutdown — наш set_my_
+    # setup_scheduler регистрирует post_init/post_shutdown – наш set_my_
     # commands оборачиваем поверх существующего post_init.
     setup_scheduler(application)
     _prev_post_init = application.post_init
     async def _combined_post_init(app):
         await _prev_post_init(app)
         await _set_my_commands(app)
+        await _set_default_menu_button(app)
     application.post_init = _combined_post_init
 
     application.run_polling(allowed_updates=Update.ALL_TYPES)
