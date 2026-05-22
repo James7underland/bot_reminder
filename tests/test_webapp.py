@@ -209,7 +209,7 @@ def test_complete_nonexistent_returns_404(client):
 
 
 def test_validate_user_invalid_json():
-    # валидная подпись, но user — невалидный JSON (ветка except)
+    # валидная подпись, но user – невалидный JSON (ветка except)
     pairs = {"auth_date": "1", "user": "{not-json"}
     dcs = "\n".join(f"{k}={pairs[k]}" for k in sorted(pairs))
     secret = hmac.new(
@@ -530,7 +530,7 @@ def test_db_get_planned_filters_and_orders():
         set_important,
         set_reminder_at,
     )
-    # 42 — пользователь под тест; пара задач разной формы
+    # 42 – пользователь под тест; пара задач разной формы
     plain = add_task(42, "plain")                   # без дедлайна/напом. → нет
     early = add_task(42, "early")
     set_deadline(early, "2026-05-19 09:00:00")
@@ -547,7 +547,7 @@ def test_db_get_planned_filters_and_orders():
 
     ids = [t["id"] for t in get_planned(42)]
     # сначала по дедлайну (early, late), потом напоминание-only (rem);
-    # без дедлайна/напом. (plain) и выполненная (done), и чужие — не входят
+    # без дедлайна/напом. (plain) и выполненная (done), и чужие – не входят
     assert ids == [early, late, rem]
 
     # important
@@ -633,7 +633,7 @@ def test_db_add_task_sets_order_index_max_plus_one():
     c = add_task(1, "c")
     assert get_task(a)["order_index"] < get_task(b)["order_index"]
     assert get_task(b)["order_index"] < get_task(c)["order_index"]
-    # У другого пользователя — независимая последовательность.
+    # У другого пользователя – независимая последовательность.
     x = add_task(2, "x")
     assert get_task(x)["order_index"] == 1
 
@@ -669,13 +669,13 @@ def test_db_move_task_up_down_swap():
     assert [t["id"] for t in get_tasks(3)] == [b, a, c]
     assert move_task_up(c) is True     # b, c, a
     assert [t["id"] for t in get_tasks(3)] == [b, c, a]
-    # крайние — двигать нечего
+    # крайние – двигать нечего
     assert move_task_up(b) is False
     assert move_task_down(a) is False
 
 
 def test_db_move_task_only_swaps_same_user_and_list():
-    """Сосед — тот же user, тот же list_id (включая NULL=NULL)."""
+    """Сосед – тот же user, тот же list_id (включая NULL=NULL)."""
     from database import (
         add_task,
         assign_task_to_list,
@@ -693,7 +693,7 @@ def test_db_move_task_only_swaps_same_user_and_list():
     assign_task_to_list(c, lid)    # в списке L
     assign_task_to_list(d, lid)    # в том же списке
     foreign = add_task(99, "f")    # чужой пользователь, выше по индексу
-    # move_down(a): сосед — b (без списка), НЕ c (другой список) и НЕ foreign.
+    # move_down(a): сосед – b (без списка), НЕ c (другой список) и НЕ foreign.
     assert move_task_down(a) is True
     assert [t["id"] for t in get_tasks_by_list(4, None)] == [b, a]
     # внутри списка L: c, d → move_up(d) → d, c
@@ -704,7 +704,7 @@ def test_db_move_task_only_swaps_same_user_and_list():
 
 
 def test_db_move_task_skips_completed_neighbor():
-    """Выполненные задачи — не соседи (они скрыты в активном списке)."""
+    """Выполненные задачи – не соседи (они скрыты в активном списке)."""
     from database import add_task, complete_task, get_tasks, move_task_down
     a = add_task(5, "a")
     b = add_task(5, "b")
@@ -719,7 +719,7 @@ def test_db_move_task_invalid_returns_false():
     from database import add_task, complete_task, move_task_down, move_task_up
     a = add_task(6, "a")
     complete_task(a)
-    # Phase 11.22 (#11): выполненная задача теперь подвижна, но эта —
+    # Phase 11.22 (#11): выполненная задача теперь подвижна, но эта –
     # единственная в группе архива, поэтому соседа нет → False.
     assert move_task_up(a) is False
     assert move_task_down(a) is False
@@ -738,7 +738,7 @@ def test_db_move_task_archive_swaps_completed():
     )
     a = add_task(61, "a")
     b = add_task(61, "b")
-    c = add_task(61, "c")     # останется активной — не сосед в архиве
+    c = add_task(61, "c")     # останется активной – не сосед в архиве
     complete_task(a)
     complete_task(b)
     assert [t["id"] for t in get_archived_tasks(61)] == [a, b]
@@ -757,12 +757,12 @@ def test_api_move_up_down(client):
     b = client.post(
         "/api/tasks", json={"description": "b"}, headers=hdr()
     ).json()["id"]
-    # b — последняя, поднимем её
+    # b – последняя, поднимем её
     r = client.post(f"/api/tasks/{b}/move-up", headers=hdr())
     assert r.status_code == 200 and r.json()["moved"] is True
     ids = [t["id"] for t in client.get("/api/tasks", headers=hdr()).json()]
     assert ids == [b, a]
-    # b уже первая — move-up = False
+    # b уже первая – move-up = False
     r2 = client.post(f"/api/tasks/{b}/move-up", headers=hdr())
     assert r2.status_code == 200 and r2.json()["moved"] is False
     # и снова вниз
@@ -787,18 +787,18 @@ def test_api_move_others_task_404(client):
 # --- Фаза 9.5: счётчик подзадач + цвет списка ---
 
 def test_db_get_steps_counts_aggregates_per_task():
-    """Один SQL — done/total для всех задач пользователя; без подзадач — нет."""
+    """Один SQL – done/total для всех задач пользователя; без подзадач – нет."""
     from database import add_step, add_task, get_steps_counts, mark_step_done
     a = add_task(11, "a")
     b = add_task(11, "b")
-    add_task(11, "c")               # без подзадач — отсутствует в результате
+    add_task(11, "c")               # без подзадач – отсутствует в результате
     s1 = add_step(a, "a1")
     add_step(a, "a2")
     add_step(b, "b1")
     mark_step_done(s1, True)
     counts = get_steps_counts(11)
     assert counts == {a: {"done": 1, "total": 2}, b: {"done": 0, "total": 1}}
-    # пользователь без подзадач — пустой dict
+    # пользователь без подзадач – пустой dict
     assert get_steps_counts(999) == {}
 
 
@@ -838,7 +838,7 @@ def test_db_is_valid_color_and_set_list_color():
     assert is_valid_color(None) is False
     assert is_valid_color("") is False
     lid = create_list(50, "L")
-    # дефолт — синий
+    # дефолт – синий
     assert get_lists(50)[0]["color"] == "#0088CC"
     assert set_list_color(lid, "#10b981") is True
     assert get_lists(50)[0]["color"] == "#10b981"
@@ -932,10 +932,10 @@ def test_db_export_user_data_roundtrip():
     assert alpha["steps"][0]["completed"] is True
     assert payload["tasks"][1]["list_name"] is None
 
-    # Импортируем тому же payload'у — но другому user_id, чтобы не
+    # Импортируем тому же payload'у – но другому user_id, чтобы не
     # путаться. Должен пересоздать всё в полном объёме.
     counts = import_user_data(200, payload, mode="merge")
-    # С Phase 11.2 счётчик включает notes (в этом тесте — 0).
+    # С Phase 11.2 счётчик включает notes (в этом тесте – 0).
     assert counts == {"lists": 1, "tasks": 2, "steps": 2, "notes": 0}
     assert {x["name"] for x in get_lists(200)} == {"Work"}
     new_alpha = next(t for t in get_tasks(200) if t["description"] == "alpha")
@@ -955,7 +955,7 @@ def test_db_import_merge_skips_existing_lists_by_name():
     )
     create_list(101, "Home")
     payload = export_user_data(101)
-    # Импортируем в того же пользователя — Home уже есть.
+    # Импортируем в того же пользователя – Home уже есть.
     counts = import_user_data(101, payload, mode="merge")
     assert counts["lists"] == 0
     assert [x["name"] for x in get_lists(101)] == ["Home"]
@@ -985,7 +985,7 @@ def test_db_import_replace_wipes_then_imports():
 def test_db_import_skips_malformed_entries_silently():
     """
     Дефенсивные пути: пустые имена/описания, не-dict в `tasks`, кривой
-    цвет — пропускаются без падения; статистика считает только успешно
+    цвет – пропускаются без падения; статистика считает только успешно
     добавленные строки.
     """
     from database import get_lists, get_steps, get_tasks, import_user_data
@@ -1016,7 +1016,7 @@ def test_db_import_skips_malformed_entries_silently():
 
 def test_db_import_rolls_back_on_db_error(monkeypatch):
     """
-    Симулируем ошибку в середине импорта — транзакция должна
+    Симулируем ошибку в середине импорта – транзакция должна
     откатиться, частичных данных не остаётся.
     """
     import sqlite3
@@ -1143,7 +1143,7 @@ def test_db_ping_ok():
 
 
 def test_db_ping_returns_false_on_error(monkeypatch):
-    """Если соединение бросает sqlite3.Error — db_ping ловит и → False."""
+    """Если соединение бросает sqlite3.Error – db_ping ловит и → False."""
     import sqlite3
 
     import database
@@ -1182,12 +1182,12 @@ def test_db_get_user_stats():
     add_step(a, "s2")
     complete_task(a)         # после complete: a выполнен, осталась b
     s = get_user_stats(310)
-    # b — активна, a — выполнена; b важная.
+    # b – активна, a – выполнена; b важная.
     assert s["active"] == 1
     assert s["completed"] == 1
     assert s["important"] == 1
     assert s["lists"] == 1
-    # steps только у `a` (теперь выполненной задачи) — но steps связаны с
+    # steps только у `a` (теперь выполненной задачи) – но steps связаны с
     # задачей по task_id, без фильтра по completed; считаем только незакрытые.
     assert s["steps_open"] == 2
     assert s["oldest_open_at"] is not None
@@ -1198,12 +1198,12 @@ def test_api_stats(client):
     for k in ("active", "completed", "lists", "important",
               "steps_open", "oldest_open_at"):
         assert k in body
-    # без авторизации — 401
+    # без авторизации – 401
     assert client.get("/api/stats").status_code == 401
 
 
 def test_healthz_returns_503_when_db_down(client, monkeypatch):
-    """Если db_ping вернул False — endpoint отдаёт HTTP 503."""
+    """Если db_ping вернул False – endpoint отдаёт HTTP 503."""
     import webapp
     monkeypatch.setattr(webapp, "db_ping", lambda: False)
     r = client.get("/healthz")
@@ -1214,7 +1214,7 @@ def test_healthz_returns_503_when_db_down(client, monkeypatch):
 
 
 def test_healthz_survives_counts_failure(client, monkeypatch, caplog):
-    """Если db_ping OK, но get_global_counts кинул — endpoint всё равно 200."""
+    """Если db_ping OK, но get_global_counts кинул – endpoint всё равно 200."""
     import webapp
 
     def boom():
@@ -1274,7 +1274,7 @@ def test_logsetup_file_handler_when_log_dir_set(tmp_path, monkeypatch):
 
 
 def test_logsetup_file_handler_failure_is_soft(tmp_path, monkeypatch):
-    """Если LOG_DIR на запись недоступен — продолжаем без файла, не падаем."""
+    """Если LOG_DIR на запись недоступен – продолжаем без файла, не падаем."""
     import logging as logging_mod
 
     import logsetup
@@ -1309,7 +1309,7 @@ def test_db_mark_task_undone_missing_returns_false():
 
 def test_db_connection_uses_wal_and_busy_timeout():
     """
-    Без WAL писатель блокирует всех читателей — на VPS это проявлялось
+    Без WAL писатель блокирует всех читателей – на VPS это проявлялось
     как «залипшая» менюшка в Mini App, когда scheduler и webapp
     одновременно касаются БД. busy_timeout=5000 страхует от
     мгновенного OperationalError.
@@ -1357,14 +1357,14 @@ def test_list_common_timezones_sorted_west_to_east():
 
 
 def test_list_common_timezones_all_valid_iana():
-    """Каждая `tz` — реально существующая зона (zoneinfo не падает)."""
+    """Каждая `tz` – реально существующая зона (zoneinfo не падает)."""
     from tzutil import list_common_timezones, valid_timezone
     for z in list_common_timezones():
         assert valid_timezone(z["tz"]), z["tz"]
 
 
 def test_api_timezones_requires_auth_and_returns_list(client):
-    # Без авторизации — 401
+    # Без авторизации – 401
     assert client.get("/api/timezones").status_code == 401
     body = client.get("/api/timezones", headers=hdr()).json()
     assert isinstance(body, list) and len(body) > 30
@@ -1411,9 +1411,9 @@ def test_db_reorder_task_respects_list_grouping():
     d = add_task(402, "d")
     assign_task_to_list(c, lid)           # в L
     assign_task_to_list(d, lid)           # тоже в L
-    # a в «без списка», c в L — нельзя их связать.
+    # a в «без списка», c в L – нельзя их связать.
     assert reorder_task(a, after_task_id=c) is False
-    # Та же подгруппа — можно.
+    # Та же подгруппа – можно.
     assert reorder_task(a, after_task_id=b) is True
     # Реордер внутри именованного списка (покрывает ветку list_id IS NOT NULL).
     assert reorder_task(c, after_task_id=d) is True
@@ -1421,7 +1421,7 @@ def test_db_reorder_task_respects_list_grouping():
 
 
 def test_db_reorder_task_rolls_back_on_db_error(monkeypatch):
-    """Сбой в середине UPDATE — целое перенумерование откатывается."""
+    """Сбой в середине UPDATE – целое перенумерование откатывается."""
     import sqlite3
 
     import database
@@ -1482,7 +1482,7 @@ def test_db_reorder_task_invalid_inputs():
     b = add_task(403, "b")
     complete_task(a)
     # Phase 11.22 (#11): выполненную (архив) нельзя ставить относительно
-    # активной — это разные подгруппы (after не в группе completed).
+    # активной – это разные подгруппы (after не в группе completed).
     assert reorder_task(a, after_task_id=b) is False
     # Несуществующая
     assert reorder_task(999999, after_task_id=None) is False
@@ -1506,7 +1506,7 @@ def test_db_reorder_task_archive_cross_list():
     a = add_task(405, "a")               # без списка
     b = add_task(405, "b")
     lid = create_list(405, "L")
-    assign_task_to_list(b, lid)          # b — в другом списке
+    assign_task_to_list(b, lid)          # b – в другом списке
     complete_task(a)
     complete_task(b)
     assert [t["id"] for t in get_archived_tasks(405)] == [a, b]
@@ -1534,17 +1534,17 @@ def test_api_reorder(client):
     # Чужая задача → 404
     assert client.post(f"/api/tasks/{c}/reorder",
                       json={"after": None}, headers=hdr(99)).status_code == 404
-    # after — чужая задача → тоже 404 (на _require_own_task)
+    # after – чужая задача → тоже 404 (на _require_own_task)
     assert client.post(f"/api/tasks/{c}/reorder",
                       json={"after": 999999}, headers=hdr()).status_code == 404
-    # after — наша задача, но в другом списке → 409 (reorder rejected)
+    # after – наша задача, но в другом списке → 409 (reorder rejected)
     lid = client.post("/api/lists", json={"name": "L"},
                       headers=hdr()).json()["id"]
     d = client.post("/api/tasks", json={"description": "d"},
                     headers=hdr()).json()["id"]
     client.post(f"/api/tasks/{d}/list",
                 json={"list_id": lid}, headers=hdr())
-    # c — без списка, d — в L → 409
+    # c – без списка, d – в L → 409
     assert client.post(f"/api/tasks/{c}/reorder",
                       json={"after": d}, headers=hdr()).status_code == 409
 
@@ -1604,12 +1604,12 @@ def test_db_purge_deleted_lists_after_window():
     # Чистим: удалится только `old`, задача отвязалась.
     purged = purge_deleted_lists(older_than_hours=24)
     assert purged == 1
-    # Прошёл — fresh ещё здесь (только что удалён)
+    # Прошёл – fresh ещё здесь (только что удалён)
     all_after = get_lists(501, include_deleted=True)
     assert {x["id"] for x in all_after} == {fresh}
     # Задача из old теперь без списка
     assert [t["id"] for t in get_tasks_by_list(501, None)] == [tid]
-    # Повторный purge — 0
+    # Повторный purge – 0
     assert purge_deleted_lists(older_than_hours=24) == 0
 
 
@@ -1639,7 +1639,7 @@ def test_api_restore_list(client):
 
 def test_db_import_merge_skips_soft_deleted_lists():
     """
-    В merge-режиме soft-deleted список НЕ переиспользуется по имени —
+    В merge-режиме soft-deleted список НЕ переиспользуется по имени –
     импорт создаёт новый. Иначе восстановление списка было бы скрытым
     побочным эффектом импорта.
     """
@@ -1692,7 +1692,7 @@ def test_db_add_get_update_note():
     assert update_note(nid, body="   ") is False
     # Битый цвет
     assert update_note(nid, color="red") is False
-    # Ничего не передано — тоже False
+    # Ничего не передано – тоже False
     assert update_note(nid) is False
     # Несуществующий
     assert update_note(999999, body="x") is False
@@ -1760,7 +1760,7 @@ def test_db_delete_restore_purge_note():
     # Restore
     assert restore_note(nid) is True
     assert get_notes(604)[0]["id"] == nid
-    # Повторный restore — False
+    # Повторный restore – False
     assert restore_note(nid) is False
     # Удаляем снова и сдвигаем deleted_at в прошлое
     delete_note(nid)
@@ -1774,7 +1774,7 @@ def test_db_delete_restore_purge_note():
     n = purge_deleted_notes(older_than_hours=24)
     assert n == 1
     assert get_note(nid) is None
-    # Повторный purge — 0
+    # Повторный purge – 0
     assert purge_deleted_notes(older_than_hours=24) == 0
 
 
@@ -1875,7 +1875,7 @@ def test_export_import_includes_notes(client):
     dst = client.get("/api/notes", headers=hdr(800)).json()
     assert len(dst) == 1 and dst[0]["body"] == "carry me"
     assert dst[0]["pinned"] is True
-    # Бэкап без notes — не должен ломать импорт
+    # Бэкап без notes – не должен ломать импорт
     legacy = {"version": 1, "lists": [], "tasks": []}
     r2 = client.post(
         "/api/import", json={"payload": legacy, "mode": "merge"},
@@ -1990,7 +1990,7 @@ def test_is_user_allowed_by_id_or_username():
 
 
 def test_api_returns_403_when_user_not_in_allowlist(client, monkeypatch):
-    """С активным allowlist'ом — любой эндпоинт под current_user_id даёт 403."""
+    """С активным allowlist'ом – любой эндпоинт под current_user_id даёт 403."""
     import config as config_mod
     monkeypatch.setattr(config_mod, "ALLOWED_USER_IDS", {99999})
     monkeypatch.setattr(config_mod, "ALLOWED_USERNAMES", set())
@@ -2077,7 +2077,7 @@ def test_db_bulk_complete():
 
 
 def test_db_bulk_filters_foreign_ids():
-    """Чужие/несуществующие id игнорируются — нельзя через bulk дёрнуть чужое."""
+    """Чужие/несуществующие id игнорируются – нельзя через bulk дёрнуть чужое."""
     from database import add_task, bulk_update_tasks, get_tasks
     mine = add_task(1001, "mine")
     other = add_task(1002, "other")
@@ -2159,7 +2159,7 @@ def test_db_bulk_unknown_action_raises():
 def test_db_bulk_empty_and_garbage_ids():
     from database import bulk_update_tasks
     assert bulk_update_tasks(1008, [], "complete") == 0
-    # str, отрицательные, дубликаты — отфильтровываются
+    # str, отрицательные, дубликаты – отфильтровываются
     assert bulk_update_tasks(1008, [-1, 0, "abc"], "complete") == 0  # type: ignore
 
 
@@ -2174,7 +2174,7 @@ def test_api_bulk_endpoint(client):
         json={"ids": [a, b], "action": "star"}, headers=hdr(),
     )
     assert r.status_code == 200 and r.json()["affected"] == 2
-    # Чужие id игнорируются (не 404 — это ожидаемая семантика)
+    # Чужие id игнорируются (не 404 – это ожидаемая семантика)
     r2 = client.post(
         "/api/tasks/bulk",
         json={"ids": [a, b], "action": "complete"}, headers=hdr(99),
@@ -2334,7 +2334,7 @@ def test_db_restore_task_brings_it_back():
     assert get_tasks(3002) == []
     assert restore_task(tid) is True
     assert [t["id"] for t in get_tasks(3002)] == [tid]
-    # Повторный restore — False
+    # Повторный restore – False
     assert restore_task(tid) is False
     # Несуществующая
     assert restore_task(999999) is False
@@ -2364,7 +2364,7 @@ def test_db_purge_deleted_tasks_after_window():
     assert n == 1
     assert get_task(old) is None         # реально удалена
     assert get_task(fresh) is not None   # ещё в окне отмены
-    # Повторный purge — 0
+    # Повторный purge – 0
     assert purge_deleted_tasks(older_than_hours=24) == 0
 
 
@@ -2396,7 +2396,7 @@ def test_api_delete_restore_task(client):
 
 
 def test_api_patch_blocked_on_deleted_task(client):
-    """После DELETE задача недоступна для PATCH/complete — 404."""
+    """После DELETE задача недоступна для PATCH/complete – 404."""
     tid = client.post(
         "/api/tasks", json={"description": "x"}, headers=hdr()
     ).json()["id"]
@@ -2430,7 +2430,7 @@ def test_db_get_archived_tasks_manual_order():
     delete_task(deleted)            # выполнено + удалено → не в архиве
     archive = get_archived_tasks(4000)
     # `c` активная → не в архиве; `deleted` удалена → не в архиве.
-    # По умолчанию — порядок order_index (a добавлена раньше b).
+    # По умолчанию – порядок order_index (a добавлена раньше b).
     assert [t["id"] for t in archive] == [a, b]
     assert c not in [t["id"] for t in archive]
     # Ручная перестановка внутри архива сохраняется в выдаче.
@@ -2442,7 +2442,7 @@ def test_db_get_archived_tasks_user_isolated():
     from database import add_task, complete_task, get_archived_tasks
     a = add_task(4001, "x")
     complete_task(a)
-    # Другой пользователь — ничего не видит.
+    # Другой пользователь – ничего не видит.
     assert get_archived_tasks(4002) == []
 
 
@@ -2504,7 +2504,7 @@ def test_decorate_converts_times_to_local_tz():
     assert out["reminder_at"] == "2026-01-01 12:00:00"
     # overdue считается ДО конвертации, в UTC: 10:00 не < 00:00 → не просрочено.
     assert out["overdue"] is False
-    # UTC-зона — без изменений.
+    # UTC-зона – без изменений.
     out_utc = _decorate(dict(task), "2026-01-01 00:00:00", tz="UTC")
     assert out_utc["deadline"] == "2026-01-01 10:00:00"
 
@@ -2525,7 +2525,7 @@ def test_api_deadline_roundtrips_in_local_tz(client):
 
 
 def test_api_archive_completed_at_local_tz(client):
-    """Phase 11.22 (#10+#12): completed_at в архиве — в часовом поясе юзера."""
+    """Phase 11.22 (#10+#12): completed_at в архиве – в часовом поясе юзера."""
     from database import get_task, set_timezone
     from tzutil import to_local
     set_timezone(42, "Europe/Moscow")
@@ -2541,119 +2541,52 @@ def test_api_archive_completed_at_local_tz(client):
     assert shown == to_local(raw, "Europe/Moscow")
 
 
-# --- Phase 11.19: напоминания для заметок ---
+# --- Phase 11.22 PR3 (#9): у заметок больше нет напоминаний ---
 
-def test_db_set_note_reminder_and_query_due():
-    from database import (
-        add_note,
-        get_due_note_reminders,
-        get_note,
-        mark_note_reminder_sent,
-        set_note_reminder,
-    )
-    nid = add_note(5000, "ping me")
-    # Прошлое время → due сразу
-    assert set_note_reminder(nid, "2020-01-01 00:00:00") is True
-    assert get_note(nid)["reminder_at"] == "2020-01-01 00:00:00"
-    due = get_due_note_reminders("2026-12-31 00:00:00")
-    assert [n["id"] for n in due] == [nid]
-    # Mark sent
-    assert mark_note_reminder_sent(nid) is True
-    assert get_due_note_reminders("2026-12-31 00:00:00") == []
-    # Снять напоминание
-    assert set_note_reminder(nid, None) is True
-    assert get_note(nid)["reminder_at"] is None
-    # Несуществующая заметка
-    assert set_note_reminder(999999, "2026-01-01 00:00:00") is False
-    assert mark_note_reminder_sent(999999) is False
-
-
-def test_db_due_note_reminders_excludes_deleted_and_future():
-    from database import (
-        add_note,
-        delete_note,
-        get_due_note_reminders,
-        set_note_reminder,
-    )
-    a = add_note(5001, "delete me later")
-    b = add_note(5001, "future")
-    set_note_reminder(a, "2020-01-01 00:00:00")
-    set_note_reminder(b, "2099-01-01 00:00:00")
-    delete_note(a)
-    due = get_due_note_reminders("2026-01-01 00:00:00")
-    # `a` удалена → исключена; `b` в будущем → не due.
-    assert due == []
-
-
-def test_api_patch_note_with_reminder(client):
-    """PATCH /api/notes/{id} устанавливает и снимает reminder_at."""
-    nid = client.post(
-        "/api/notes", json={"body": "ping"}, headers=hdr()
-    ).json()["id"]
-    # Поставить напоминание
-    r = client.patch(
-        f"/api/notes/{nid}",
-        json={"reminder_at": "2030-01-01 09:00"}, headers=hdr(),
-    )
-    assert r.status_code == 200 and r.json()["reminder_at"]
-    # Очистить
-    r2 = client.patch(
-        f"/api/notes/{nid}", json={"clear_reminder": True}, headers=hdr()
-    )
-    assert r2.status_code == 200 and r2.json()["reminder_at"] is None
-    # Чужая → 404
-    assert client.patch(
-        f"/api/notes/{nid}",
-        json={"reminder_at": "2030-01-01 09:00"}, headers=hdr(99),
-    ).status_code == 404
-
-
-def test_api_patch_note_only_reminder_no_other_changes(client):
-    """Если в PATCH только reminder/clear_reminder — это валидно (не 422)."""
+def test_api_patch_note_ignores_reminder_field(client):
+    """#9: поле reminder_at в PATCH заметки игнорируется, не сохраняется."""
+    from database import get_note
     nid = client.post(
         "/api/notes", json={"body": "x"}, headers=hdr()
     ).json()["id"]
     r = client.patch(
         f"/api/notes/{nid}",
-        json={"reminder_at": "2030-05-05 12:00"}, headers=hdr(),
+        json={"reminder_at": "2030-01-01 09:00", "title": "T"},
+        headers=hdr(),
     )
     assert r.status_code == 200
+    note = get_note(nid)
+    assert note["title"] == "T"            # обычные поля по-прежнему работают
+    assert note["reminder_at"] is None     # напоминание не сохранено
 
 
-def test_scheduler_sends_note_reminder(monkeypatch):
-    """Phase 11.19: check_and_send_reminders теперь поднимает заметки."""
+def test_scheduler_ignores_note_reminders():
+    """#9: планировщик не шлёт напоминания заметок, даже если reminder_at
+    проставлен в БД напрямую (легаси-данные)."""
     import asyncio
     from unittest.mock import AsyncMock
 
     import config as config_mod
+    import database
+    from database import add_note
+    from scheduler import check_and_send_reminders
     save_ids = config_mod.ALLOWED_USER_IDS
-    config_mod.ALLOWED_USER_IDS = set()
+    config_mod.ALLOWED_USER_IDS = set()       # без фильтрации allowlist
     try:
-        from database import (
-            add_note,
-            get_note,
-            set_note_reminder,
+        nid = add_note(5050, "legacy note")
+        conn = database.get_connection()
+        conn.execute(
+            "UPDATE notes SET reminder_at = ?, reminder_sent = 0 WHERE id = ?",
+            ("2020-01-01 00:00:00", nid),
         )
-        from scheduler import check_and_send_reminders
-        nid = add_note(5002, "drink water")
-        set_note_reminder(nid, "2020-01-01 00:00:00")
+        conn.commit()
+        conn.close()
         fake_bot = AsyncMock()
-        n = asyncio.run(check_and_send_reminders(fake_bot))
-        assert n >= 1
-        # Отправили текст с префиксом «📓 Заметка».
-        sent_args = [c for c in fake_bot.send_message.await_args_list
-                     if c.kwargs.get("chat_id") == 5002]
-        assert sent_args
-        text = sent_args[0].kwargs["text"]
-        assert "📓 Заметка" in text
-        # reminder_sent помечен — повторный вызов ничего не шлёт.
-        assert get_note(nid)["reminder_sent"] == 1
-        fake_bot.reset_mock()
-        m = asyncio.run(check_and_send_reminders(fake_bot))
-        # Может быть >0 для других тестов, но для нашей заметки — нет.
-        sent2 = [c for c in fake_bot.send_message.await_args_list
-                 if c.kwargs.get("chat_id") == 5002]
-        assert not sent2
-        del m
+        asyncio.run(check_and_send_reminders(fake_bot))
+        note_msgs = [
+            c for c in fake_bot.send_message.await_args_list
+            if c.kwargs.get("chat_id") == 5050
+        ]
+        assert note_msgs == []                 # для заметки – ничего
     finally:
         config_mod.ALLOWED_USER_IDS = save_ids

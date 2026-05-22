@@ -1,6 +1,6 @@
 """Фаза 5.6: тесты «Мой день» (БД-слой).
 
-С Phase 11.1 чат-команды убраны. Сценарии My Day в Mini App — в
+С Phase 11.1 чат-команды убраны. Сценарии My Day в Mini App – в
 `test_webapp.py`.
 """
 import sqlite3

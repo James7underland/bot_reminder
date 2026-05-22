@@ -16,9 +16,16 @@
     --sec:var(--tg-theme-secondary-bg-color,#f1f1f1);
   }
   *{box-sizing:border-box}
-  body{margin:0;font:15px/1.4 -apple-system,system-ui,sans-serif;
-       background:var(--bg);color:var(--text)}
-  /* Phase 11.13: убираем фиксированный max-width — на десктопе body
+  /* Phase 11.22 (#5): системный шрифт как у Telegram/BotFather —
+     Segoe UI на Windows/tdesktop, Roboto на Android, San Francisco на
+     iOS/macOS. Сглаживание делает текст «телеграмно» чётким. */
+  body{margin:0;
+       font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",
+         "Roboto","Helvetica Neue","Apple Color Emoji",sans-serif;
+       background:var(--bg);color:var(--text);
+       -webkit-font-smoothing:antialiased;
+       -moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility}
+  /* Phase 11.13: убираем фиксированный max-width – на десктопе body
      должно занимать ВСЁ доступное пространство (особенно в fullscreen,
      иначе виден столбик 760px по центру и пустые поля). Содержимое
      центрируем через flex/grid, если потребуется на очень широких
@@ -51,7 +58,7 @@
   body.select-mode .fab,
   body.fab-hidden .fab{opacity:0;pointer-events:none;transform:scale(.85)}
   /* Phase 11.16: empty-states для пустых видов. Большая иконка,
-     заголовок, подсказка — приятнее, чем «Пока нет задач» серым. */
+     заголовок, подсказка – приятнее, чем «Пока нет задач» серым. */
   .empty-state{display:flex;flex-direction:column;align-items:center;
     justify-content:center;text-align:center;padding:40px 24px;
     color:var(--hint);gap:10px;min-height:50vh}
@@ -61,7 +68,7 @@
     color:var(--text)}
   .empty-state .empty-hint{font-size:14px;line-height:1.45;
     max-width:340px;color:var(--hint)}
-  /* Phase 11.16: анимация при выполнении задачи — короткий fade-out,
+  /* Phase 11.16: анимация при выполнении задачи – короткий fade-out,
      перед тем как load() её уберёт из активного списка. */
   @keyframes task-complete{
     0%{opacity:1;transform:translateX(0)}
@@ -138,12 +145,20 @@
   .bar{display:flex;gap:8px;padding:8px 16px}
   .bar input,.bar select{flex:1;min-width:0;padding:9px 10px;border-radius:10px;
        border:1px solid var(--sec);background:var(--sec);color:var(--text)}
+  /* Phase 11.22 (#5): кнопки в стиле Telegram — заливка theme-цветом,
+     полужирный текст, лёгкий отклик на нажатие. */
   button{cursor:pointer;border:0;border-radius:10px;
-       background:var(--btn);color:var(--btn-text);padding:9px 14px;font-size:15px}
-  .ghost{background:transparent;color:var(--link);padding:6px}
+       background:var(--btn);color:var(--btn-text);padding:10px 16px;
+       font-size:15px;font-weight:600;font-family:inherit;
+       transition:filter .12s,transform .06s}
+  button:hover{filter:brightness(1.06)}
+  button:active{transform:scale(.98)}
+  .ghost{background:transparent;color:var(--link);padding:6px;
+       font-weight:500;transition:background .12s}
+  .ghost:hover{filter:none;background:rgba(127,127,127,.10)}
   ul{list-style:none;margin:0;padding:0 8px 24px}
   /* Phase 11.12: карточка задачи. Чуть больше воздуха, мягкая тень,
-     левая цветная полоска (color из списка) — как в Microsoft To Do. */
+     левая цветная полоска (color из списка) – как в Microsoft To Do. */
   li{background:var(--sec);margin:6px 4px;border-radius:10px;
     padding:12px 14px;position:relative;overflow:hidden;
     box-shadow:0 1px 2px rgba(0,0,0,.05);
@@ -296,7 +311,7 @@
     word-break:break-word;overflow:hidden;text-overflow:ellipsis;
     display:-webkit-box;-webkit-line-clamp:6;
     -webkit-box-orient:vertical}
-  /* Phase 11.5/11.12: markdown — все цвета явные, под пастель. */
+  /* Phase 11.5/11.12: markdown – все цвета явные, под пастель. */
   .md a{color:#1d4ed8 !important;text-decoration:underline;
     word-break:break-all}
   .md code{background:rgba(0,0,0,.08);color:#111 !important;
@@ -309,9 +324,6 @@
   .md .md-cb:hover{transform:scale(1.15)}
   .md .md-cb-on{color:#16a34a !important}
   .md .md-done{text-decoration:line-through;opacity:.55}
-  .note .nrem{font-size:11px;color:#1d4ed8 !important;
-    background:rgba(29,78,216,.08);border-radius:6px;
-    padding:3px 8px;align-self:flex-start;display:inline-block}
   .note .nmeta{font-size:11px;margin-top:auto;color:#475569 !important}
   .note .npin{position:absolute;top:8px;right:8px;font-size:14px;
     color:#f5b301;opacity:.9}
@@ -367,7 +379,7 @@
 </aside>
 <div id="navBackdrop" class="drawer-backdrop" hidden></div>
 
-<!-- Overflow-меню ⋯ — редкие действия (часовой пояс, экспорт, импорт). -->
+<!-- Overflow-меню ⋯ – редкие действия (часовой пояс, экспорт, импорт). -->
 <div id="moreMenu" class="popmenu" hidden>
   <button class="popmenu-item" data-action="tz">⚙ Часовой пояс</button>
   <button class="popmenu-item" data-action="export">📦 Экспорт JSON</button>
@@ -394,7 +406,7 @@
       <input type="checkbox" id="showDone"> ✓
     </label>
   </div>
-  <!-- Скрытые «совместимые» элементы — drawer и overflow-меню работают
+  <!-- Скрытые «совместимые» элементы – drawer и overflow-меню работают
        поверх существующих обработчиков listSel/viewSel/newList/.../tzBtn.
        Минимум переделок логики, максимум UI-полировки. -->
   <select id="listSel" hidden></select>
@@ -443,7 +455,7 @@
 <script>
 // Phase 11.17: SVG-иконки в кнопках (заменяют эмодзи в местах, где
 // они выглядели «эмодзи-лень»). Lucide-стиль: stroke-based, 24px,
-// currentColor — наследуют цвет кнопки/темы автоматически.
+// currentColor – наследуют цвет кнопки/темы автоматически.
 const _SVG = (path, viewBox = "0 0 24 24") =>
   `<svg viewBox="${viewBox}" width="20" height="20" fill="none"
      stroke="currentColor" stroke-width="2" stroke-linecap="round"
@@ -491,7 +503,7 @@ window.addEventListener("DOMContentLoaded", () => {
   if (fab) {
     fab.addEventListener("click", () => {
       if (_section === "notes") {
-        // Если уже инициализирован обработчик newNoteBtn — дёргаем его.
+        // Если уже инициализирован обработчик newNoteBtn – дёргаем его.
         const nb = document.getElementById("newNoteBtn");
         if (nb) nb.click();
       } else {
@@ -507,9 +519,9 @@ window.addEventListener("DOMContentLoaded", () => {
 
 const tg = window.Telegram ? window.Telegram.WebApp : null;
 
-// Phase 11.3/11.8: режим окна — широкое на десктопе, компактное на мобиле.
+// Phase 11.3/11.8: режим окна – широкое на десктопе, компактное на мобиле.
 // Telegram WebApp.platform: 'tdesktop'/'macos'/'web'/'weba'/'webk'/'windows'
-// /'linux' — десктоп; 'android'/'ios' — мобайл; 'unknown' — мобайл по умолч.
+// /'linux' – десктоп; 'android'/'ios' – мобайл; 'unknown' – мобайл по умолч.
 const DESKTOP_PLATFORMS = new Set(
   ["tdesktop", "macos", "web", "weba", "webk", "windows", "linux"]
 );
@@ -540,8 +552,8 @@ const INIT = getInitData();
 
 // --- Модалы. Нативные window.alert/prompt/confirm в Telegram WebApp
 // работают нестабильно (фокус не возвращается → менюшки «залипают»).
-// Используем Telegram.WebApp.showAlert/showPopup, для ввода — кастомный
-// inline-overlay. Все вызовы — Promise-based, без callback hell.
+// Используем Telegram.WebApp.showAlert/showPopup, для ввода – кастомный
+// inline-overlay. Все вызовы – Promise-based, без callback hell.
 
 function uiAlert(message){
   return new Promise(resolve => {
@@ -558,7 +570,7 @@ function uiConfirm(message){
 }
 
 function uiPrompt(title, defaultValue=""){
-  // У TG WebApp нет нативного prompt — рисуем оверлей с input + двумя
+  // У TG WebApp нет нативного prompt – рисуем оверлей с input + двумя
   // кнопками. Промис разрешается значением или null (cancel).
   return new Promise(resolve => {
     const back = document.createElement("div");
@@ -587,7 +599,7 @@ function uiPrompt(title, defaultValue=""){
       if (e.key === "Enter") close(inp.value);
       else if (e.key === "Escape") close(null);
     });
-    // Если пользователь нажал Telegram BackButton — отмена.
+    // Если пользователь нажал Telegram BackButton – отмена.
     if (tg && tg.BackButton) {
       tg.BackButton.show();
       const off = () => { tg.BackButton.hide(); tg.offEvent("backButtonClicked", off);
@@ -600,7 +612,7 @@ function uiPrompt(title, defaultValue=""){
 
 function uiSelect(title, options, current=null) {
   // options: [{value, label, group?}]. Группы рендерятся как заголовки.
-  // current — value текущего выбранного (подсвечивается).
+  // current – value текущего выбранного (подсвечивается).
   // Resolves: chosen value | null on cancel.
   return new Promise(resolve => {
     const esc = s => String(s).replace(/[&<>"]/g,
@@ -669,7 +681,7 @@ function uiSelect(title, options, current=null) {
   });
 }
 
-// Лёгкий тост — не блокирует UI, не использует нативный alert.
+// Лёгкий тост – не блокирует UI, не использует нативный alert.
 function uiToast(msg, kind = "err") {
   const t = document.createElement("div");
   t.className = "toast " + kind;
@@ -724,12 +736,12 @@ async function api(path, opts={}) {
       },
     });
   } catch (e) {
-    // Сеть/CORS/DNS — на этом этапе response ещё не получили.
+    // Сеть/CORS/DNS – на этом этапе response ещё не получили.
     if (!opts._silent) uiToast("Нет сети: " + (e && e.message || e));
     throw e;
   }
   if (r.status === 401) {
-    // Phase 11.3: вместо пустого «Откройте из Telegram» — даём
+    // Phase 11.3: вместо пустого «Откройте из Telegram» – даём
     // диагностику. Чаще всего issue в одной из двух точек:
     //   1) initData пуст → запустили вне Telegram
     //   2) hash mismatch → токен в .env не совпадает с подписью TG
@@ -751,20 +763,20 @@ async function api(path, opts={}) {
     document.body.innerHTML =
       '<div class="muted" style="padding:24px">' +
       '<b>Доступ запрещён.</b><br><br>' +
-      'Этот бот ограничен по списку пользователей. Если это ваш бот — ' +
+      'Этот бот ограничен по списку пользователей. Если это ваш бот – ' +
       'добавьте свой telegram-id в <code>ALLOWED_USER_IDS</code> в ' +
       '<code>.env</code> и перезапустите <code>bot_webapp</code>.' +
       '</div>';
     throw new Error("forbidden");
   }
   if (r.status === 204) return null;
-  // 5xx / 4xx (кроме 401) — показываем серверный detail, иначе сам код.
+  // 5xx / 4xx (кроме 401) – показываем серверный detail, иначе сам код.
   if (!r.ok && !opts._silent) {
     let detail = `HTTP ${r.status}`;
     try {
       const body = await r.clone().json();
       if (body && body.detail) detail = body.detail;
-    } catch { /* не JSON — оставляем код */ }
+    } catch { /* не JSON – оставляем код */ }
     uiToast("Ошибка: " + detail);
   }
   return r.json().catch(() => null);
@@ -774,7 +786,7 @@ const $ = (s, el=document) => el.querySelector(s);
 
 // --- Сохраняемое состояние UI (Phase 10.4): чтобы при повторном
 // открытии Mini App пользователя ждал тот же список и view, что был.
-// localStorage в Telegram WebApp работает; для приватности — ключи
+// localStorage в Telegram WebApp работает; для приватности – ключи
 // с user_id-prefix не нужны, т.к. у каждого пользователя свой WebView.
 const _LS_KEY = "bot_reminder_ui";
 function loadUI() {
@@ -827,16 +839,16 @@ function _emptyHtmlForTasks(searchQuery, view) {
         "Добавьте задачу с сегодняшним сроком, или закрепите существующую в «Мой день» из её панели.");
     case "planned":
       return _emptyTemplate("📅", "Нет планов",
-        "Здесь будут задачи со сроком или напоминанием. Установите дату — задача попадёт сюда автоматически.");
+        "Здесь будут задачи со сроком или напоминанием. Установите дату – задача попадёт сюда автоматически.");
     case "important":
       return _emptyTemplate("⭐", "Нет важных",
-        "Нажмите ★ рядом с задачей, чтобы пометить её важной — она появится в этом виде.");
+        "Нажмите ★ рядом с задачей, чтобы пометить её важной – она появится в этом виде.");
     case "archive":
       return _emptyTemplate("🗂", "Архив пуст",
         "Выполненные задачи появятся здесь. Чтобы вернуть, откройте задачу и снимите галочку.");
     default:
       return _emptyTemplate("✨", "Пока нет задач",
-        "Добавьте первую задачу в поле выше — или потяните ≡ влево, чтобы выбрать список.");
+        "Добавьте первую задачу в поле выше – или потяните ≡ влево, чтобы выбрать список.");
   }
 }
 
@@ -851,11 +863,11 @@ async function load(){
   const sq = $("#search").value.trim();
   const view = $("#viewSel").value;
   // Phase 11.22 (#3): «с выполненными» осмысленно только в обычном
-  // списке. В smart-views и архиве — прячем (в архиве и так всё
+  // списке. В smart-views и архиве – прячем (в архиве и так всё
   // выполненное).
   const showDoneWrap = $("#showDone").closest(".inline-toggle");
   if (showDoneWrap) showDoneWrap.style.display = (view === "all") ? "" : "none";
-  // Phase 11.22 (#15): в архив нельзя добавлять задачи кнопкой — только
+  // Phase 11.22 (#15): в архив нельзя добавлять задачи кнопкой – только
   // при выполнении. Прячем строку «+ Новая задача» и FAB.
   const inArchive = view === "archive";
   const addBar = $("#newTask").closest(".bar");
@@ -889,11 +901,11 @@ async function load(){
   for (const t of tasks) ul.appendChild(row(t));
   applyIcons(ul);   // Phase 11.17: подставляем SVG в data-icon
   // Drag-and-drop включаем только в режимах, где порядок реально
-  // соответствует order_index — это «Все» (без поиска) и «по списку».
+  // соответствует order_index – это «Все» (без поиска) и «по списку».
   // В smart-views (myday/planned/important) и при поиске список
   // отсортирован по другим критериям, drag сбил бы порядок.
   // Phase 11.22 (#11): в архиве drag/стрелки тоже работают (порядок
-  // среди выполненных). Smart-views и поиск — без drag (там сорт иной).
+  // среди выполненных). Smart-views и поиск – без drag (там сорт иной).
   const dragEnabled = !sq &&
     !["myday","planned","important"].includes(view) &&
     !$("#sortSel").value;
@@ -912,11 +924,11 @@ async function load(){
 async function refreshStats(view, tasks){
   const badge = $("#statsBadge");
   // Phase 11.22 (#14): в разделе «Заметки» счётчик активных задач не
-  // показываем — он там не к месту.
+  // показываем – он там не к месту.
   if (_section === "notes") { badge.hidden = true; return; }
   // Phase 11.22 (#15): счётчик отражает ТЕКУЩИЙ раздел, а не глобальную
-  // сумму. Берём из уже загруженного списка (в «Важном» — важные, в
-  // списке — активные этого списка, в архиве — число выполненных).
+  // сумму. Берём из уже загруженного списка (в «Важном» – важные, в
+  // списке – активные этого списка, в архиве – число выполненных).
   view = view || $("#viewSel").value;
   const list = tasks || [];
   let count, label;
@@ -932,20 +944,20 @@ async function refreshStats(view, tasks){
   }
   badge.innerHTML = `<span class="num">${count}</span> ${label}`;
   badge.hidden = false;
-  // Подробная (глобальная) статистика — для попапа по клику. Тихо.
+  // Подробная (глобальная) статистика – для попапа по клику. Тихо.
   try { badge._stats = await api("/stats", {_silent: true}); }
-  catch { /* /stats недоступен — попап просто без деталей */ }
+  catch { /* /stats недоступен – попап просто без деталей */ }
 }
 
 $("#statsBadge").onclick = async () => {
   const s = $("#statsBadge")._stats;
   if (!s) return;
-  // Полное окно — обычный uiAlert (Telegram showAlert одноразмерный)
+  // Полное окно – обычный uiAlert (Telegram showAlert одноразмерный)
   // или собственный модал? Сделаем простой текст через uiAlert,
   // содержательный.
   const fmtAge = s.oldest_open_at
     ? new Date(s.oldest_open_at.replace(" ", "T") + "Z").toLocaleDateString()
-    : "—";
+    : "–";
   await uiAlert(
     `Активных задач: ${s.active}\n`
     + `Важных: ${s.important}\n`
@@ -1024,7 +1036,7 @@ function attachDragDrop(ul){
   // Pointer Events: единый код для мыши и тач-экранов. HTML5 native
   // draggable плохо работает на мобиле, поэтому собираем вручную.
   // Логика: на pointerdown по .drag-handle захватываем pointer-capture,
-  // на move — отмечаем, над какой li мы (выше/ниже середины), на up —
+  // на move – отмечаем, над какой li мы (выше/ниже середины), на up –
   // POST /reorder с `after` = id предыдущей li (или null если перед
   // первой).
   ul.querySelectorAll(".drag-handle").forEach(handle => {
@@ -1066,16 +1078,16 @@ function attachDragDrop(ul){
         clearMarks();
         li.classList.remove("dragging");
         if (!target) return;
-        // after_id — id предыдущей li относительно нового положения.
+        // after_id – id предыдущей li относительно нового положения.
         let afterId = null;
         if (pos === "above") {
           // вставка перед target: после предыдущей сестры target
           const prev = target.previousElementSibling;
-          // если предыдущая — сама `li` (мы перетаскиваем её), то
+          // если предыдущая – сама `li` (мы перетаскиваем её), то
           // позиция «перед target» эквивалентна текущей.
           if (prev && prev !== li) afterId = parseInt(prev.dataset.id, 10);
           else if (prev === li) {
-            // уже на нужной позиции — не дёргаем сервер
+            // уже на нужной позиции – не дёргаем сервер
             return;
           }
           else afterId = null;
@@ -1090,7 +1102,7 @@ function attachDragDrop(ul){
           await api(`/tasks/${id}/reorder`, {method:"POST",
             body: JSON.stringify({after: afterId})});
         } catch {
-          load();    // на ошибке — синхронизируемся с сервером
+          load();    // на ошибке – синхронизируемся с сервером
         }
       };
 
@@ -1107,8 +1119,8 @@ function row(t){
   li.dataset.id = t.id;
   if (t.overdue) li.classList.add("overdue");
   if (t.completed) li.classList.add("done");
-  // Phase 11.12: цветной акцент-полоска слева — цвет берётся из списка
-  // задачи (LISTS подгружен на старте). Если задача без списка — без
+  // Phase 11.12: цветной акцент-полоска слева – цвет берётся из списка
+  // задачи (LISTS подгружен на старте). Если задача без списка – без
   // полосы. Помогает «глазами» сгруппировать задачи в общем виде.
   if (t.list_id != null) {
     const lst = LISTS.find(l => l.id === t.list_id);
@@ -1201,7 +1213,7 @@ function row(t){
     </div>`;
   const meta = [];
   // Phase 11.22 (#12): для выполненных показываем время выполнения
-  // (уже в часовом поясе пользователя — конвертация на бэкенде, #10).
+  // (уже в часовом поясе пользователя – конвертация на бэкенде, #10).
   if (t.completed && t.completed_at) {
     meta.push("✓ выполнено " + fmt(t.completed_at));
   }
@@ -1252,20 +1264,20 @@ function row(t){
       </div>`).join("");
   }
 
-  // Phase 11.22 (#6, #7): тап по строке = выделить; раскрытие — стрелкой
+  // Phase 11.22 (#6, #7): тап по строке = выделить; раскрытие – стрелкой
   // снизу. Inline-edit и long-press убраны (вся логика в делегированном
   // обработчике ниже).
 
   li._refreshSteps = refreshSteps;
   li.addEventListener("click", async (e) => {
-    // Phase 11.22 (#4): SVG-иконки в кнопках «съедали» клик — ищем
+    // Phase 11.22 (#4): SVG-иконки в кнопках «съедали» клик – ищем
     // ближайший элемент с data-act через closest().
     const actEl = e.target.closest("[data-act]");
     const act = actEl ? actEl.dataset.act : null;
     const inRow = !!e.target.closest(".row");
 
     // Phase 11.22 (#6): одиночный тап по строке (вне кнопок) = ВЫДЕЛИТЬ.
-    // Описание не открывается, имя не редактируется. Раскрытие — только
+    // Описание не открывается, имя не редактируется. Раскрытие – только
     // стрелкой снизу (#7, data-act="expand").
     if (inRow && (!act || (selectMode && act !== "toggle"))) {
       e.preventDefault();
@@ -1283,8 +1295,8 @@ function row(t){
       return;
     }
     if (act === "toggle") {
-      // Phase 11.16: при «выполнить» — короткая анимация перед load().
-      // При «вернуть в активные» — без анимации (визуально она тут вредна).
+      // Phase 11.16: при «выполнить» – короткая анимация перед load().
+      // При «вернуть в активные» – без анимации (визуально она тут вредна).
       const completing = !t.completed;
       if (completing) li.classList.add("completing");
       const apiCall = api(
@@ -1368,7 +1380,7 @@ function row(t){
       load();
     } else if (act === "pick-note") {
       // Phase 11.6: выбираем заметку из текущих (фильтруем soft-deleted
-      // на бэкенде через GET /api/notes — он уже их прячет).
+      // на бэкенде через GET /api/notes – он уже их прячет).
       const notes = await api("/notes");
       if (!notes.length) {
         await uiAlert("Заметок ещё нет. Создайте заметку в разделе 📓 Заметки.");
@@ -1390,7 +1402,7 @@ function row(t){
         body: JSON.stringify({clear_note: true})});
       load();
     } else if (act === "del-task") {
-      // Phase 11.10: soft-delete + undo (8 сек). Описание задачи —
+      // Phase 11.10: soft-delete + undo (8 сек). Описание задачи –
       // в тосте, чтобы было понятно, что именно удалено.
       await api(`/tasks/${t.id}`, {method:"DELETE"});
       load();
@@ -1418,9 +1430,9 @@ async function addTask(){
   if (view === "archive") return;
   const created = await api("/tasks", {method:"POST",
     body: JSON.stringify({description:d})});
-  // Phase 11.22 (#15): новая задача наследует текущий раздел —
+  // Phase 11.22 (#15): новая задача наследует текущий раздел –
   // «Важное» → важная; «Мой день» → закреплена на сегодня; выбранный
-  // список → кладём в него. «Все»/«Запланировано» — без изменений.
+  // список → кладём в него. «Все»/«Запланировано» – без изменений.
   const id = created && created.id;
   if (id != null) {
     if (view === "important") {
@@ -1513,8 +1525,8 @@ $("#clrList").onclick = async () => {
   if (!id) { await uiAlert("Сначала выберите список в выпадающем меню"); return; }
   const cur = (LISTS.find(l => String(l.id) === String(id)) || {}).color
               || "#0088CC";
-  // Скрытый <input type="color"> — нативный пикер. На случай отмены
-  // (нет события change) — удаляем узел через blur и не оставляем
+  // Скрытый <input type="color"> – нативный пикер. На случай отмены
+  // (нет события change) – удаляем узел через blur и не оставляем
   // мёртвых элементов в DOM (от которых, теоретически, могла «залипать»
   // менюшка при повторных открытиях).
   const inp = document.createElement("input");
@@ -1542,7 +1554,7 @@ $("#tzBtn").onclick = async () => {
   const zones = await api("/timezones");
   const options = zones.map(z => ({
     value: z.tz,
-    label: `(${z.offset}) ${z.label} — ${z.tz}`,
+    label: `(${z.offset}) ${z.label} – ${z.tz}`,
     group: z.group,
   }));
   const picked = await uiSelect("Часовой пояс", options, cur);
@@ -1716,7 +1728,7 @@ function renderDrawerLists() {
       }
       listId = it.id;
       saveUI({listId: listId});
-      // Сброс view в "all" — без этого list-фильтр поверх смарт-вью не работает.
+      // Сброс view в "all" – без этого list-фильтр поверх смарт-вью не работает.
       $("#viewSel").value = "all";
       saveUI({view: "all"});
       syncDrawerActive();
@@ -1729,14 +1741,14 @@ function renderDrawerLists() {
   applyIcons(box);   // Phase 11.17: SVG для ✎/🎨/🗑 hover-кнопок
 }
 
-// «+» возле заголовка «Списки» в drawer'е — создаёт новый список через
+// «+» возле заголовка «Списки» в drawer'е – создаёт новый список через
 // существующий обработчик #newList (показывает uiPrompt).
 $("#drawerNewList").onclick = (e) => {
   e.stopPropagation();
   $("#newList").click();
 };
 
-// Overflow ⋯ — открывает popmenu c таймзоной/экспортом/импортом.
+// Overflow ⋯ – открывает popmenu c таймзоной/экспортом/импортом.
 function toggleMoreMenu(show) {
   const m = $("#moreMenu");
   m.hidden = show === undefined ? !m.hidden : !show;
@@ -1790,24 +1802,24 @@ async function loadNotes() {
 // Phase 11.5: безопасный markdown-рендерер для тела заметки.
 // Hand-rolled, без зависимостей. ВАЖНО: работает только над УЖЕ
 // заэскейпленной строкой (`esc(text)` сначала превращает <,>,&,",
-// > в HTML-сущности). После эскейпа все «&lt;b&gt;» — обычный текст,
+// > в HTML-сущности). После эскейпа все «&lt;b&gt;» – обычный текст,
 // нет XSS-вектора. Поверх него мы вставляем только наши теги.
 //
 // Поддерживается:
 //   **bold**, __bold__
 //   *italic*, _italic_
 //   `inline code`
-//   [text](url)              — http(s) и t.me/, иначе показываем без ссылки
+//   [text](url)              – http(s) и t.me/, иначе показываем без ссылки
 //   автоссылки http(s)://… и t.me/…
-//   - [ ] / - [x]            — чек-лист (визуально; для редактирования —
+//   - [ ] / - [x]            – чек-лист (визуально; для редактирования –
 //                              в textarea остаётся сырой markdown)
 //   обычные переносы строк → <br>
 function mdToHtml(raw) {
   if (!raw) return "";
-  // 1) Экранируем всю строку целиком — никаких сюрпризов от пользователя.
+  // 1) Экранируем всю строку целиком – никаких сюрпризов от пользователя.
   let s = esc(raw);
   // 2) Чек-листы `- [ ] …` / `- [x] …`. Один общий regex; присваиваем
-  //    каждому чек-боксу последовательный `data-cb` (Phase 11.9) — по
+  //    каждому чек-боксу последовательный `data-cb` (Phase 11.9) – по
   //    нему JS-обработчик найдёт и перевернёт нужную строку в исходном
   //    `raw`.
   let cbIdx = -1;
@@ -1821,17 +1833,17 @@ function mdToHtml(raw) {
       : rest;
     return `${sp}<span class="${cls}" data-cb="${cbIdx}">${icon}</span> ${body}`;
   });
-  // 3) Inline code `…` — раньше других, чтобы внутри не парсилось.
+  // 3) Inline code `…` – раньше других, чтобы внутри не парсилось.
   s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
-  // 4) [text](url) — только безопасные схемы.
+  // 4) [text](url) – только безопасные схемы.
   s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, text, url) => {
     if (/^(https?:\/\/|tg:\/\/|\/|mailto:)/i.test(url)) {
       return `<a href="${url}" target="_blank" rel="noopener noreferrer">${text}</a>`;
     }
-    return text + " (" + url + ")";   // небезопасная ссылка — показываем как текст
+    return text + " (" + url + ")";   // небезопасная ссылка – показываем как текст
   });
   // 5) Автоссылки (только если ещё не внутри тега `<a>`). Простой
-  //    эвристический подход: ищем URL вне «>…<» — но проще пометить
+  //    эвристический подход: ищем URL вне «>…<» – но проще пометить
   //    уже вставленные <a> и не трогать.
   // Для упрощения: сначала вынесем существующие <a …>текст</a> в плейсхолдеры.
   const stash = [];
@@ -1848,7 +1860,7 @@ function mdToHtml(raw) {
   // 6) **bold** / __bold__
   s = s.replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
   s = s.replace(/__([^_\n]+)__/g, '<b>$1</b>');
-  // 7) *italic* / _italic_ — после bold, чтобы не съесть **
+  // 7) *italic* / _italic_ – после bold, чтобы не съесть **
   s = s.replace(/(^|[^\*])\*([^*\n]+)\*(?!\*)/g, '$1<i>$2</i>');
   s = s.replace(/(^|[^_])_([^_\n]+)_(?!_)/g, '$1<i>$2</i>');
   // 8) Переносы строк.
@@ -1878,21 +1890,17 @@ function noteCard(n) {
   const li = document.createElement("li");
   li.className = "note" + (n.pinned ? " pinned" : "");
   li.style.background = n.color || "#FEF3C7";
-  // Цвет фона — пастель; текст всегда чёрный для контраста.
+  // Цвет фона – пастель; текст всегда чёрный для контраста.
   li.style.color = "#111827";
-  // Phase 11.19: badge с временем напоминания, если установлено.
-  const remBadge = n.reminder_at
-    ? `<div class="nrem" title="Напомнить">⏰ ${shortDate(n.reminder_at)}</div>`
-    : '';
+  // Phase 11.22 (#9): у заметок нет напоминаний – это противоречит их смыслу.
   li.innerHTML =
     (n.pinned ? '<span class="npin" title="Закреплено">📌</span>' : '')
     + (n.title ? `<div class="ntitle">${esc(n.title)}</div>` : '')
     + `<div class="nbody md">${mdToHtml(n.body)}</div>`
-    + remBadge
     + `<div class="nmeta">${shortDate(n.updated_at || n.created_at)}</div>`;
   li.onclick = (e) => {
     // Phase 11.9: клик по чек-боксу → toggle прямо из карточки,
-    // редактор НЕ открываем. Любой другой клик — открыть редактор.
+    // редактор НЕ открываем. Любой другой клик – открыть редактор.
     const cb = e.target && e.target.closest && e.target.closest(".md-cb");
     if (cb && cb.dataset.cb != null) {
       e.stopPropagation();
@@ -1901,10 +1909,10 @@ function noteCard(n) {
       if (next == null) return;
       // Оптимистично: обновляем содержимое в state + перерисуем карточку.
       n.body = next;
-      // Обновляем DOM без перезагрузки всей сетки — быстро и без мерцания.
+      // Обновляем DOM без перезагрузки всей сетки – быстро и без мерцания.
       const md = li.querySelector(".nbody.md");
       if (md) md.innerHTML = mdToHtml(next);
-      // Сохраняем на сервер; на ошибке — load() синхронизирует.
+      // Сохраняем на сервер; на ошибке – load() синхронизирует.
       api(`/notes/${n.id}`, {method:"PATCH",
         body: JSON.stringify({body: next}), _silent: true})
         .catch(() => loadNotes());
@@ -1945,13 +1953,8 @@ function openNoteEditor(note) {
            `<span class="color-swatch" data-c="${c}" style="background:${c}"></span>`
          ).join("")}
        </div>
-       <label style="font-size:12px;color:var(--hint)">
-         Напомнить
-         <input type="datetime-local" class="note-rem-input">
-       </label>
        <div class="row">
          <button class="ghost" data-act="pin">${cur.pinned ? "Открепить" : "Закрепить"}</button>
-         <button class="ghost" data-act="clr-rem">Убрать напом.</button>
          ${isNew ? "" : '<button class="ghost" data-act="del">🗑 Удалить</button>'}
        </div>
        ${isNew ? "" : '<div class="note-linked" style="color:var(--hint);font-size:12px"></div>'}
@@ -1992,19 +1995,6 @@ function openNoteEditor(note) {
   refreshSwatches();
   const close = () => back.parentNode && back.parentNode.removeChild(back);
   back.querySelector(".modal-cancel").onclick = close;
-  // Phase 11.19: поле напоминания + кнопка «Убрать напом.».
-  const remIn = back.querySelector(".note-rem-input");
-  let remCleared = false;
-  // Сервер хранит UTC; для отображения в input — конвертируем в локаль.
-  if (!isNew && cur.reminder_at) {
-    remIn.value = toInput(cur.reminder_at);   // toInput: 'YYYY-MM-DDTHH:MM'
-  }
-  const clrRemBtn = back.querySelector('[data-act="clr-rem"]');
-  clrRemBtn.onclick = () => {
-    remIn.value = "";
-    remCleared = true;
-  };
-  remIn.addEventListener("input", () => { remCleared = false; });
   // Pin toggle: меняет локальное состояние + текст кнопки
   const pinBtn = back.querySelector('[data-act="pin"]');
   pinBtn.onclick = () => {
@@ -2028,23 +2018,13 @@ function openNoteEditor(note) {
     const body = bIn.value.trim();
     if (!body) { uiToast("Тело заметки не может быть пустым"); return; }
     const title = tIn.value.trim();
-    // Phase 11.19: получаем reminder из input'а (локальное datetime).
-    const remVal = remIn.value;   // 'YYYY-MM-DDTHH:MM' or ''
     if (isNew) {
-      const created = await api("/notes", {method:"POST", body:
+      await api("/notes", {method:"POST", body:
         JSON.stringify({body, title: title || null, color: chosenColor, pinned})});
-      // Reminder ставим через PATCH (создание не принимает reminder_at,
-      // чтобы не загромождать NoteCreate). Если поле заполнено.
-      if (remVal && created && created.id) {
-        await api(`/notes/${created.id}`, {method:"PATCH",
-          body: JSON.stringify({reminder_at: fmt(remVal)})});
-      }
     } else {
       const patch = {body, color: chosenColor, pinned};
       if (title) patch.title = title;
       else patch.clear_title = true;
-      if (remCleared) patch.clear_reminder = true;
-      else if (remVal) patch.reminder_at = fmt(remVal);
       await api(`/notes/${note.id}`, {method:"PATCH",
         body: JSON.stringify(patch)});
     }
@@ -2067,7 +2047,7 @@ function openNoteEditor(note) {
   setTimeout(() => (isNew ? bIn : tIn).focus(), 30);
 }
 
-// Восстанавливаем сохранённые поля до первого load() — иначе сразу
+// Восстанавливаем сохранённые поля до первого load() – иначе сразу
 // пойдёт лишний запрос с дефолтами, а затем повторный с восстановленными.
 (function restoreUI() {
   if (_UI.view) $("#viewSel").value = _UI.view;

@@ -1,8 +1,8 @@
 """
 Планировщик напоминаний на APScheduler.
 
-`check_and_send_reminders` — чистая тестируемая логика (БД + отправка
-через переданный объект `bot`). `setup_scheduler` — интеграция с
+`check_and_send_reminders` – чистая тестируемая логика (БД + отправка
+через переданный объект `bot`). `setup_scheduler` – интеграция с
 APScheduler (вне unit-тестов).
 """
 import logging
@@ -14,10 +14,8 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 import config
 from config import SCHEDULER_CHECK_INTERVAL
 from database import (
-    get_due_note_reminders,
     get_due_reminders,
     get_overdue_tasks,
-    mark_note_reminder_sent,
     mark_overdue_notified,
     mark_reminder_sent,
     purge_deleted_lists,
@@ -33,7 +31,7 @@ _TIME_FMT = "%Y-%m-%d %H:%M:%S"
 def _reminder_keyboard(task_id: int) -> InlineKeyboardMarkup:
     """
     Phase 11.7: кнопки прямо в уведомлении: +15 мин, +1 ч, ✓ Готово.
-    Callback-data — короткие токены `snz:<id>:<minutes>` и
+    Callback-data – короткие токены `snz:<id>:<minutes>` и
     `done:<id>` (Telegram ограничивает payload 64 байтами).
     """
     return InlineKeyboardMarkup([[
@@ -48,21 +46,13 @@ def _task_text(item) -> str:
     return str(item.get("description") or "")
 
 
-def _note_text(item) -> str:
-    """Текст уведомления для заметки: title (если есть), иначе тело."""
-    if item.get("title"):
-        return str(item["title"])
-    body = (item.get("body") or "").strip()
-    return body[:140]
-
-
 async def _notify(bot, items, prefix, mark, *,
                   with_buttons: bool = True,
                   text_for=_task_text) -> int:
     """Шлёт `prefix: текст(item)` каждому элементу; помечает успешные.
 
     Анти-дубль: успех → `mark(item.id)`. Ошибка → НЕ помечаем (повтор
-    на следующем тике; приоритет — доставить).
+    на следующем тике; приоритет – доставить).
 
     Phase 11.3: ALLOWED_USER_IDS фильтрует чужие user_id (с пометкой как
     sent, чтобы не вызывать flood-stop).
@@ -98,7 +88,7 @@ async def check_and_send_reminders(bot, now: datetime | None = None) -> int:
     Шлёт напоминания (наступил `reminder_at`) и уведомления о просрочке
     (прошёл `deadline`). Возвращает общее число отправленных сообщений.
 
-    `now` по умолчанию — текущее UTC (наивная строка; время хранится в
+    `now` по умолчанию – текущее UTC (наивная строка; время хранится в
     UTC, Фаза 5.8).
     """
     now = now or datetime.now(UTC).replace(tzinfo=None)
@@ -109,20 +99,15 @@ async def check_and_send_reminders(bot, now: datetime | None = None) -> int:
     sent += await _notify(
         bot, get_overdue_tasks(now_str), "Просрочено", mark_overdue_notified
     )
-    # Phase 11.19: напоминания для заметок (без snooze-кнопок —
-    # заметки не имеют состояния «выполнено» / рекуррентности).
-    sent += await _notify(
-        bot, get_due_note_reminders(now_str), "📓 Заметка",
-        mark_note_reminder_sent,
-        with_buttons=False, text_for=_note_text,
-    )
+    # Phase 11.22 (#9): уведомлений для заметок больше нет – заметки
+    # по смыслу пишутся без напоминаний.
     return sent
 
 
 def _purge_old_soft_deletes() -> None:
     """
     Phase 10.7 + 11.2 + 11.10: раз в час физически удаляет soft-deleted
-    списки, заметки и задачи старше 24 часов. Каждый purge — в
+    списки, заметки и задачи старше 24 часов. Каждый purge – в
     отдельном try/except, чтобы ошибка одного не блокировала остальные.
     """
     try:
@@ -147,7 +132,7 @@ def setup_scheduler(application) -> AsyncIOScheduler:
     ВАЖНО: `AsyncIOScheduler.start()` требует уже работающего event loop.
     Если вызвать его прямо в `main()` (до `run_polling`), будет
     `RuntimeError: no running event loop`. Поэтому старт переносится в
-    `post_init` (PTB вызывает его внутри запущенного loop), а остановка —
+    `post_init` (PTB вызывает его внутри запущенного loop), а остановка –
     в `post_shutdown` (graceful).
     """
     scheduler = AsyncIOScheduler()

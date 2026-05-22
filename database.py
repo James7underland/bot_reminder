@@ -19,15 +19,15 @@ logger = logging.getLogger(__name__)
 def get_connection():
     """
     Создаёт соединение с БД. Включает:
-    - `foreign_keys=ON` — каскадное удаление;
-    - `journal_mode=WAL` — несколько читателей + один писатель
+    - `foreign_keys=ON` – каскадное удаление;
+    - `journal_mode=WAL` – несколько читателей + один писатель
       параллельно. Снимает контеншн между `bot_reminder` (планировщик)
       и `bot_webapp` (HTTP API), которые пишут в одну БД и без WAL
       периодически блокировали друг друга, проявляясь в Mini App как
       «зависшая» менюшка (запросы зависали на блокировке БД).
-    - `busy_timeout=5000` — ждать до 5 сек на залоченных страницах
+    - `busy_timeout=5000` – ждать до 5 сек на залоченных страницах
       вместо мгновенного `OperationalError: database is locked`.
-    WAL устанавливается единожды и сохраняется в самом файле БД —
+    WAL устанавливается единожды и сохраняется в самом файле БД –
     повторный PRAGMA на каждом коннекте дёшев (no-op, если уже WAL).
     """
     conn = sqlite3.connect(DATABASE_PATH, timeout=5.0)
@@ -119,7 +119,7 @@ def init_db():
     # Фаза 7: разделяем «срок» (deadline) и «напоминание» (reminder_at).
     if "reminder_at" not in columns:
         cursor.execute("ALTER TABLE tasks ADD COLUMN reminder_at TEXT")
-        # Раньше due_date был триггером напоминания — сохраняем поведение.
+        # Раньше due_date был триггером напоминания – сохраняем поведение.
         cursor.execute(
             "UPDATE tasks SET reminder_at = due_date "
             "WHERE due_date IS NOT NULL"
@@ -145,7 +145,7 @@ def init_db():
     # Фаза 11.10: soft-delete для задач (с поддержкой undo).
     if "deleted_at" not in columns:
         cursor.execute("ALTER TABLE tasks ADD COLUMN deleted_at TEXT")
-    # Phase 11.22 (#12): время выполнения задачи (UTC) — показываем в архиве.
+    # Phase 11.22 (#12): время выполнения задачи (UTC) – показываем в архиве.
     if "completed_at" not in columns:
         cursor.execute("ALTER TABLE tasks ADD COLUMN completed_at TEXT")
     # Фаза 9.5: цвет списка (визуальная подсказка в Mini App).
@@ -174,7 +174,7 @@ def init_db():
             reminder_sent INTEGER NOT NULL DEFAULT 0
         )
     ''')
-    # Phase 11.19: для существующих БД — добавить колонки.
+    # Phase 11.19: для существующих БД – добавить колонки.
     note_columns = {row[1] for row in cursor.execute("PRAGMA table_info(notes)")}
     if "reminder_at" not in note_columns:
         cursor.execute("ALTER TABLE notes ADD COLUMN reminder_at TEXT")
@@ -218,7 +218,7 @@ def add_task(user_id: int, description: str, due_date: str | None = None) -> int
     return task_id
 
 # Белый список сортировок (никакой пользовательский ввод не идёт в SQL).
-# С Фазы 9.4 дефолт — ручной порядок (`order_index`, потом `created_at` как
+# С Фазы 9.4 дефолт – ручной порядок (`order_index`, потом `created_at` как
 # тайбрейкер для старых бэкфилл-нулей и одинаковых индексов).
 _SORT_ORDERS = {
     "important": "important DESC, order_index, created_at",
@@ -238,7 +238,7 @@ def get_tasks(
     Args:
         user_id: ID пользователя в Telegram.
         completed: Если True, возвращает выполненные задачи. Иначе - активные.
-        sort: important | due | alpha | created. По умолчанию (None) —
+        sort: important | due | alpha | created. По умолчанию (None) –
             по времени создания (поведение неизменно).
 
     Returns:
@@ -249,7 +249,7 @@ def get_tasks(
     cursor = conn.cursor()
 
     flag = 1 if completed else 0
-    # Дефолт (None) — ручной порядок (Фаза 9.4), чтобы Mini App и /tasks
+    # Дефолт (None) – ручной порядок (Фаза 9.4), чтобы Mini App и /tasks
     # отражали drag/стрелки. Старая семантика «по created_at» доступна как
     # sort="created".
     order = _SORT_ORDERS.get(sort, "order_index, created_at")
@@ -331,9 +331,9 @@ def get_due_tasks(now: str) -> list[dict]:
     """
     Задачи, для которых наступило время напоминания и оно ещё не отправлено.
 
-    `now` — строка `YYYY-MM-DD HH:MM:SS`. Учитывается `remind_before`
+    `now` – строка `YYYY-MM-DD HH:MM:SS`. Учитывается `remind_before`
     (минуты до срока): время срабатывания =
-    `due_date - remind_before` (при NULL — ровно `due_date`).
+    `due_date - remind_before` (при NULL – ровно `due_date`).
     """
     conn = get_connection()
     conn.row_factory = sqlite3.Row
@@ -426,7 +426,7 @@ def delete_task(task_id: int) -> bool:
 
 
 def restore_task(task_id: int) -> bool:
-    """Снимает soft-delete. False — если задача не была удалена."""
+    """Снимает soft-delete. False – если задача не была удалена."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -536,7 +536,7 @@ def is_valid_color(value: str | None) -> bool:
 
 
 def set_list_color(list_id: int, color: str) -> bool:
-    """Задаёт цвет списка (#RRGGBB). False — если цвет невалидный или нет."""
+    """Задаёт цвет списка (#RRGGBB). False – если цвет невалидный или нет."""
     if not is_valid_color(color):
         logger.warning("set_list_color: bad color %r", color)
         return False
@@ -559,7 +559,7 @@ def delete_list(list_id: int) -> bool:
     """
     Soft-delete списка (Phase 10.7): помечает `deleted_at = now()`, но
     физически не удаляет. Задачи СОХРАНЯЮТ `list_id` (на время окна
-    отмены, чтобы restore вернул всё на места). Если уже удалён —
+    отмены, чтобы restore вернул всё на места). Если уже удалён –
     повторно False (idempotency).
 
     Реальное удаление выполняет `purge_deleted_lists()` через 24 ч.
@@ -584,7 +584,7 @@ def delete_list(list_id: int) -> bool:
 def restore_list(list_id: int) -> bool:
     """
     Phase 10.7: отменяет soft-delete. Возвращает True, если список был
-    в состоянии deleted (и теперь восстановлен). False — если списка
+    в состоянии deleted (и теперь восстановлен). False – если списка
     нет, или он и так активен.
     """
     conn = get_connection()
@@ -608,7 +608,7 @@ def purge_deleted_lists(older_than_hours: int = 24) -> int:
     """
     Phase 10.7: физическое удаление списков, помеченных как deleted
     дольше `older_than_hours` часов. Их задачи отвязываются
-    (`list_id=NULL`) — то же поведение, что было раньше у hard-delete.
+    (`list_id=NULL`) – то же поведение, что было раньше у hard-delete.
     Возвращает число удалённых списков. Вызывается из APScheduler
     раз в час (см. `scheduler.py`).
     """
@@ -667,7 +667,7 @@ def get_tasks_by_list(
 ) -> list[dict]:
     """Активные/выполненные задачи пользователя в конкретном списке.
 
-    `list_id=None` — задачи без списка.
+    `list_id=None` – задачи без списка.
     """
     conn = get_connection()
     conn.row_factory = sqlite3.Row
@@ -739,7 +739,7 @@ def is_valid_recurrence(value: str | None) -> bool:
 
 
 def next_occurrence(due_date: str, recurrence: str) -> str:
-    """Следующая дата повторения. due_date — `YYYY-MM-DD HH:MM:SS`."""
+    """Следующая дата повторения. due_date – `YYYY-MM-DD HH:MM:SS`."""
     dt = datetime.strptime(due_date, "%Y-%m-%d %H:%M:%S")
     if recurrence == "daily":
         nxt = dt + timedelta(days=1)
@@ -767,7 +767,7 @@ def next_occurrence(due_date: str, recurrence: str) -> str:
             if cand.weekday() in days:
                 nxt = cand
                 break
-        else:  # pragma: no cover — defensive: набор всегда непуст
+        else:  # pragma: no cover – defensive: набор всегда непуст
             raise ValueError(f"no weekday match: {recurrence}")
     else:
         raise ValueError(f"unknown recurrence: {recurrence}")
@@ -775,7 +775,7 @@ def next_occurrence(due_date: str, recurrence: str) -> str:
 
 
 def set_recurrence(task_id: int, recurrence: str | None) -> bool:
-    """Задаёт повтор (None — снять). False при неверном значении/нет задачи."""
+    """Задаёт повтор (None – снять). False при неверном значении/нет задачи."""
     if not is_valid_recurrence(recurrence):
         logger.warning("set_recurrence: invalid value %r", recurrence)
         return False
@@ -796,7 +796,7 @@ def set_recurrence(task_id: int, recurrence: str | None) -> bool:
 
 def complete_task(task_id: int) -> dict | None:
     """
-    Выполняет задачу. Если задача повторяющаяся и имеет due_date —
+    Выполняет задачу. Если задача повторяющаяся и имеет due_date –
     создаёт следующий экземпляр.
 
     Возвращает {completed, recurred, next_due, new_task_id} либо None,
@@ -812,7 +812,7 @@ def complete_task(task_id: int) -> dict | None:
         logger.warning("complete_task: task=%s not found", task_id)
         return None
 
-    # Phase 11.22 (#12): фиксируем время выполнения (UTC) — показываем в архиве.
+    # Phase 11.22 (#12): фиксируем время выполнения (UTC) – показываем в архиве.
     cursor.execute(
         "UPDATE tasks SET completed = 1, completed_at = ? WHERE id = ?",
         (_utc_now_str(), task_id),
@@ -909,7 +909,7 @@ def add_step(task_id: int, description: str) -> int | None:
 def get_steps_counts(user_id: int) -> dict[int, dict[str, int]]:
     """
     Агрегат по подзадачам всех задач пользователя:
-    `{task_id: {"done": N, "total": M}}`. Один SQL-запрос (GROUP BY) —
+    `{task_id: {"done": N, "total": M}}`. Один SQL-запрос (GROUP BY) –
     чтобы избежать N+1 при отрисовке списка. Задачи без подзадач
     в результат не попадают (Mini App просто не рисует «N/M»).
     """
@@ -982,7 +982,7 @@ def delete_step(step_id: int) -> bool:
 
 
 def set_note(task_id: int, note: str | None) -> bool:
-    """Задаёт заметку задачи (None — очистить). False, если задачи нет."""
+    """Задаёт заметку задачи (None – очистить). False, если задачи нет."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -1039,7 +1039,7 @@ def get_myday(user_id: int, day: str) -> list[dict]:
     Задачи «на сегодня»: активные, у которых либо дедлайн в день `day`,
     либо они закреплены в «Мой день» на `day`.
 
-    `day` — строка `YYYY-MM-DD`.
+    `day` – строка `YYYY-MM-DD`.
     """
     conn = get_connection()
     conn.row_factory = sqlite3.Row
@@ -1075,7 +1075,7 @@ def _rows_to_tasks(rows) -> list[dict]:
 
 
 def get_planned(user_id: int) -> list[dict]:
-    """Активные задачи с дедлайном или напоминанием. Срок раньше — выше."""
+    """Активные задачи с дедлайном или напоминанием. Срок раньше – выше."""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
@@ -1093,7 +1093,7 @@ def get_planned(user_id: int) -> list[dict]:
 
 
 def get_important_tasks(user_id: int) -> list[dict]:
-    """Активные важные задачи. Срок раньше — выше."""
+    """Активные важные задачи. Срок раньше – выше."""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
@@ -1114,7 +1114,7 @@ def get_archived_tasks(user_id: int) -> list[dict]:
 
     Phase 11.22 (замечание #11): сортируем по ручному порядку
     (`order_index`), чтобы стрелки ▲▼ и drag-and-drop внутри архива
-    отражались в выдаче. `created_at, id` — стабильный tie-break.
+    отражались в выдаче. `created_at, id` – стабильный tie-break.
     """
     conn = get_connection()
     conn.row_factory = sqlite3.Row
@@ -1135,7 +1135,7 @@ def get_archived_tasks(user_id: int) -> list[dict]:
 def search_tasks(user_id: int, query: str) -> list[dict]:
     """
     Активные задачи пользователя, где подстрока `query` встречается в
-    описании или заметке (регистронезависимо, в т.ч. для кириллицы —
+    описании или заметке (регистронезависимо, в т.ч. для кириллицы –
     фильтрация на стороне Python через str.lower()).
     """
     q = (query or "").strip().lower()
@@ -1164,7 +1164,7 @@ def search_tasks(user_id: int, query: str) -> list[dict]:
 
 def set_remind_before(task_id: int, minutes: int | None) -> bool:
     """
-    Задаёт напоминание за `minutes` минут до срока (None — ровно в срок).
+    Задаёт напоминание за `minutes` минут до срока (None – ровно в срок).
     False при отрицательном значении или если задачи нет.
     """
     if minutes is not None and minutes < 0:
@@ -1188,7 +1188,7 @@ def set_remind_before(task_id: int, minutes: int | None) -> bool:
 # --- Часовые пояса пользователя (Фаза 5.8) ---
 
 def get_timezone(user_id: int) -> str:
-    """Часовой пояс пользователя (IANA). По умолчанию — UTC."""
+    """Часовой пояс пользователя (IANA). По умолчанию – UTC."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -1217,7 +1217,7 @@ def set_timezone(user_id: int, timezone: str) -> bool:
     return True
 
 
-# --- Срок (deadline) и напоминание (reminder_at) — Фаза 7 ---
+# --- Срок (deadline) и напоминание (reminder_at) – Фаза 7 ---
 
 def set_deadline(task_id: int, deadline: str | None) -> bool:
     """
@@ -1265,7 +1265,7 @@ def set_reminder_at(task_id: int, reminder_at: str | None) -> bool:
 def snooze_reminder(task_id: int, minutes: int) -> bool:
     """
     Откладывает напоминание на `minutes` минут от ТЕКУЩЕГО UTC-времени
-    (а не от старого `reminder_at`) — это семантика «напомни через…».
+    (а не от старого `reminder_at`) – это семантика «напомни через…».
     Сбрасывает `reminder_sent` (повторно сработает). False при minutes<=0
     или если задачи нет.
     """
@@ -1280,7 +1280,7 @@ def snooze_reminder(task_id: int, minutes: int) -> bool:
 def get_due_reminders(now: str) -> list[dict]:
     """
     Активные задачи, у которых наступило `reminder_at` и напоминание ещё
-    не отправлено. `now` — UTC `YYYY-MM-DD HH:MM:SS`.
+    не отправлено. `now` – UTC `YYYY-MM-DD HH:MM:SS`.
     """
     conn = get_connection()
     conn.row_factory = sqlite3.Row
@@ -1300,7 +1300,7 @@ def get_due_reminders(now: str) -> list[dict]:
 def get_overdue_tasks(now: str) -> list[dict]:
     """
     Активные задачи, у которых срок прошёл и о просрочке ещё не
-    уведомляли. `now` — UTC `YYYY-MM-DD HH:MM:SS`.
+    уведомляли. `now` – UTC `YYYY-MM-DD HH:MM:SS`.
     """
     conn = get_connection()
     conn.row_factory = sqlite3.Row
@@ -1341,10 +1341,10 @@ def _move_task(task_id: int, direction: int) -> bool:
     «соседом» того же пользователя с тем же статусом `completed`. False,
     если задачи нет или соседа в этом направлении не существует (крайняя).
     Per-user `order_index` уникален (см. `add_task`), поэтому простого
-    свопа двух значений достаточно — без сдвига промежутка.
+    свопа двух значений достаточно – без сдвига промежутка.
 
     Phase 11.22 (замечание #11): активные задачи переставляются внутри
-    своего списка; архивные (`completed = 1`) — единой кросс-списочной
+    своего списка; архивные (`completed = 1`) – единой кросс-списочной
     группой, как они показываются в «Архиве».
     """
     conn = get_connection()
@@ -1362,9 +1362,9 @@ def _move_task(task_id: int, direction: int) -> bool:
         return False
     user_id, list_id, idx = row["user_id"], row["list_id"], row["order_index"]
     comp_flag = 1 if row["completed"] else 0
-    # Сосед — задача того же пользователя с тем же статусом completed,
-    # с минимально большим/меньшим order_index. Для активных — в том же
-    # списке (или тоже «без списка»); для архива — список игнорируем.
+    # Сосед – задача того же пользователя с тем же статусом completed,
+    # с минимально большим/меньшим order_index. Для активных – в том же
+    # списке (или тоже «без списка»); для архива – список игнорируем.
     if comp_flag:
         list_clause = ""
         params: tuple = (user_id, idx)
@@ -1424,17 +1424,17 @@ def reorder_task(task_id: int, after_task_id: int | None) -> bool:
     """
     Phase 10.6 (drag-and-drop): помещает `task_id` сразу после
     `after_task_id` среди задач того же пользователя с тем же статусом
-    `completed`. `after_task_id=None` — двигает в начало. Если
-    `after_task_id` отсутствует/принадлежит другому юзеру или подгруппе —
+    `completed`. `after_task_id=None` – двигает в начало. Если
+    `after_task_id` отсутствует/принадлежит другому юзеру или подгруппе –
     False.
 
     Phase 11.22 (замечание #11): активные задачи переставляются внутри
-    своего списка; архивные (`completed = 1`) — единой кросс-списочной
+    своего списка; архивные (`completed = 1`) – единой кросс-списочной
     группой (в «Архиве» списки не разделяются).
 
     Внутри: одна транзакция. Достаём всех «соседей» нужной подгруппы,
     убираем `task_id` из их последовательности, вставляем в нужное место,
-    перенумеровываем `order_index = i+1`. Простая линейная сложность — на
+    перенумеровываем `order_index = i+1`. Простая линейная сложность – на
     практике задач немного.
     """
     conn = get_connection()
@@ -1451,8 +1451,8 @@ def reorder_task(task_id: int, after_task_id: int | None) -> bool:
             return False
         user_id, list_id = row["user_id"], row["list_id"]
         comp_flag = 1 if row["completed"] else 0
-        # Соседи — задачи той же подгруппы (тот же completed). Удалённые
-        # исключаем. Архив (completed) — кросс-списочный, активные —
+        # Соседи – задачи той же подгруппы (тот же completed). Удалённые
+        # исключаем. Архив (completed) – кросс-списочный, активные –
         # в пределах своего списка.
         if comp_flag:
             cursor.execute(
@@ -1525,12 +1525,12 @@ def bulk_update_tasks(
     подсунутыми ID. Всё в одной транзакции.
 
     Поддерживаемые `action`:
-      complete   — completed=1 (запускает рекуррентность через
+      complete   – completed=1 (запускает рекуррентность через
                    complete_task для каждой подходящей задачи);
-      uncomplete — completed=0;
-      star       — important=1;
-      unstar     — important=0;
-      move       — `list_id` (None → «без списка»). Если `list_id` —
+      uncomplete – completed=0;
+      star       – important=1;
+      unstar     – important=0;
+      move       – `list_id` (None → «без списка»). Если `list_id` –
                    id чужого/удалённого списка, действие отвергается.
     """
     if action not in _BULK_ACTIONS:
@@ -1575,7 +1575,7 @@ def bulk_update_tasks(
             )
         return affected
 
-    # Остальные — одним UPDATE.
+    # Остальные – одним UPDATE.
     if action == "move":
         if list_id is not None:
             # Проверяем, что список свой и активный.
@@ -1628,7 +1628,7 @@ def bulk_update_tasks(
 def db_ping() -> bool:
     """
     Лёгкая проверка БД: открыть соединение и сделать `SELECT 1`.
-    True — БД отвечает. False — любая ошибка (соединения нет, лок
+    True – БД отвечает. False – любая ошибка (соединения нет, лок
     дольше busy_timeout, повреждение и т.д.). Используется `/healthz`
     для внешнего мониторинга.
     """
@@ -1674,7 +1674,7 @@ def get_global_counts() -> dict[str, int]:
 
 def get_user_stats(user_id: int) -> dict:
     """
-    Сводка по одному пользователю — для виджета в Mini App. Один проход
+    Сводка по одному пользователю – для виджета в Mini App. Один проход
     по БД (несколько коротких SELECT'ов, BUSY_TIMEOUT их обслужит).
     """
     conn = get_connection()
@@ -1752,10 +1752,10 @@ _EXPORT_TASK_FIELDS = (
 
 def export_user_data(user_id: int) -> dict:
     """
-    Полный снимок данных пользователя — для бэкапа/переноса. Один
+    Полный снимок данных пользователя – для бэкапа/переноса. Один
     проход по БД: список списков, задачи (с привязкой к именам списков,
     а не id, чтобы импорт мог их пересоздать), подзадачи внутри каждой
-    задачи, настройки. Версия схемы — `EXPORT_VERSION`.
+    задачи, настройки. Версия схемы – `EXPORT_VERSION`.
     """
     conn = get_connection()
     conn.row_factory = sqlite3.Row
@@ -1770,7 +1770,7 @@ def export_user_data(user_id: int) -> dict:
     id_to_name = {row["id"]: row["name"] for row in lists_rows}
     lists = [{"name": r["name"], "color": r["color"],
               "created_at": r["created_at"]} for r in lists_rows]
-    # Задачи. Phase 11.10: soft-deleted задачи в экспорт не идут —
+    # Задачи. Phase 11.10: soft-deleted задачи в экспорт не идут –
     # их 24-часовое окно не должно тянуться через бэкап.
     cursor.execute(
         "SELECT * FROM tasks WHERE user_id = ? AND deleted_at IS NULL "
@@ -1815,10 +1815,10 @@ def export_user_data(user_id: int) -> dict:
     )
     tz_row = cursor.fetchone()
     tz = tz_row["timezone"] if tz_row else "UTC"
-    # Phase 11.2: заметки. Phase 11.19: + reminder_at.
+    # Phase 11.2: заметки (Phase 11.22 #9: без напоминаний).
     cursor.execute(
-        "SELECT title, body, pinned, color, created_at, updated_at, "
-        "reminder_at FROM notes WHERE user_id = ? AND deleted_at IS NULL "
+        "SELECT title, body, pinned, color, created_at, updated_at "
+        "FROM notes WHERE user_id = ? AND deleted_at IS NULL "
         "ORDER BY created_at, id",
         (user_id,),
     )
@@ -1830,7 +1830,6 @@ def export_user_data(user_id: int) -> dict:
         "color": r["color"],
         "created_at": r["created_at"],
         "updated_at": r["updated_at"],
-        "reminder_at": r["reminder_at"],
     } for r in notes_rows]
     conn.close()
     return {
@@ -1854,7 +1853,7 @@ def _validate_export_payload(payload: dict) -> str | None:
         return "missing 'lists' array"
     if not isinstance(payload.get("tasks"), list):
         return "missing 'tasks' array"
-    # Phase 11.2: notes — опционально (бэкап без них тоже валиден).
+    # Phase 11.2: notes – опционально (бэкап без них тоже валиден).
     notes = payload.get("notes")
     if notes is not None and not isinstance(notes, list):
         return "'notes' must be an array if present"
@@ -1867,14 +1866,14 @@ def import_user_data(
     """
     Импортирует данные из формата `export_user_data`.
 
-    `mode="merge"` — добавляет новые задачи и списки рядом с существующими
+    `mode="merge"` – добавляет новые задачи и списки рядом с существующими
     (списки сопоставляются по имени; новые задачи дозаписываются,
-    дубликаты не отсеиваются — пользователь сам решит, что удалить).
-    `mode="replace"` — сначала удаляет все списки/задачи/подзадачи
+    дубликаты не отсеиваются – пользователь сам решит, что удалить).
+    `mode="replace"` – сначала удаляет все списки/задачи/подзадачи
     пользователя, потом импортирует.
 
-    Возвращает `{"lists": N, "tasks": M, "steps": K}` — счётчики добавленных
-    записей. Поднимает `ValueError` при невалидном payload — caller (API
+    Возвращает `{"lists": N, "tasks": M, "steps": K}` – счётчики добавленных
+    записей. Поднимает `ValueError` при невалидном payload – caller (API
     эндпоинт) переводит его в HTTP 422.
     """
     err = _validate_export_payload(payload)
@@ -1894,7 +1893,7 @@ def import_user_data(
             cursor.execute("DELETE FROM notes WHERE user_id = ?", (user_id,))
 
         # Списки: имя → id, переиспользуем существующие в merge.
-        # Soft-deleted списки (Phase 10.7) НЕ переиспользуем — пользователь
+        # Soft-deleted списки (Phase 10.7) НЕ переиспользуем – пользователь
         # их явно удалил, импорт должен создать новый.
         cursor.execute(
             "SELECT id, name FROM lists WHERE user_id = ? "
@@ -1972,7 +1971,7 @@ def import_user_data(
                 )
                 steps_added += 1
 
-        # Часовой пояс — только если в payload явно задан и
+        # Часовой пояс – только если в payload явно задан и
         # отличается от UTC по умолчанию.
         user_info = payload.get("user") or {}
         tz = (user_info.get("timezone") or "").strip()
@@ -1984,7 +1983,7 @@ def import_user_data(
             )
 
         # Phase 11.2: импорт заметок. replace-режим уже вычистил
-        # пользовательские заметки выше (см. начало функции); merge —
+        # пользовательские заметки выше (см. начало функции); merge –
         # дописывает (дубликаты не отсеиваем по контенту).
         notes_added = 0
         for note in (payload.get("notes") or []):
@@ -1998,14 +1997,13 @@ def import_user_data(
                 else "#FEF3C7"
             cursor.execute(
                 "INSERT INTO notes (user_id, title, body, pinned, color, "
-                "created_at, updated_at, reminder_at) VALUES (?, ?, ?, ?, ?, "
+                "created_at, updated_at) VALUES (?, ?, ?, ?, ?, "
                 "COALESCE(?, CURRENT_TIMESTAMP), "
-                "COALESCE(?, CURRENT_TIMESTAMP), ?)",
+                "COALESCE(?, CURRENT_TIMESTAMP))",
                 (
                     user_id, title, body,
                     1 if note.get("pinned") else 0, color,
                     note.get("created_at"), note.get("updated_at"),
-                    note.get("reminder_at"),
                 ),
             )
             notes_added += 1
@@ -2042,7 +2040,7 @@ def add_note(
 ) -> int | None:
     """
     Phase 11.2: создаёт заметку. Тело обязательно (пустая строка → None,
-    функция возвращает None). Заголовок и цвет — опциональны (дефолт
+    функция возвращает None). Заголовок и цвет – опциональны (дефолт
     цвета задаёт CREATE TABLE).
     """
     body = (body or "").strip()
@@ -2078,7 +2076,7 @@ def get_notes(
 ) -> list[dict]:
     """
     Активные заметки пользователя: закреплённые сверху, остальные по
-    `updated_at DESC, id DESC`. `include_deleted` — для эндпоинта
+    `updated_at DESC, id DESC`. `include_deleted` – для эндпоинта
     восстановления и cron-purge.
     """
     conn = get_connection()
@@ -2102,7 +2100,7 @@ def get_notes(
 
 
 def get_note(note_id: int) -> dict | None:
-    """Одна заметка по id (любой статус). None — если не существует."""
+    """Одна заметка по id (любой статус). None – если не существует."""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
@@ -2123,7 +2121,7 @@ def update_note(
 ) -> bool:
     """
     Phase 11.2: частичный апдейт. `None` для поля = не трогать.
-    `clear_title=True` — обнулить заголовок (т.к. None уже использован
+    `clear_title=True` – обнулить заголовок (т.к. None уже использован
     как «не трогать»). Возвращает False, если заметки нет / нечего
     обновлять / битый цвет.
     """
@@ -2166,64 +2164,10 @@ def update_note(
     return False
 
 
-def set_note_reminder(note_id: int, reminder_at: str | None) -> bool:
-    """
-    Phase 11.19: задаёт/снимает напоминание для заметки.
-    `reminder_at` — UTC «YYYY-MM-DD HH:MM:SS» или None для сброса.
-    При установке сбрасывается `reminder_sent`, чтобы планировщик
-    отправил его заново. False — заметки нет.
-    """
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "UPDATE notes SET reminder_at = ?, reminder_sent = 0, "
-        "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        (reminder_at, note_id),
-    )
-    rows = cursor.rowcount
-    conn.commit()
-    conn.close()
-    if rows > 0:
-        logger.info("note=%s reminder_at=%s", note_id, reminder_at)
-        return True
-    logger.warning("set_note_reminder: note=%s not found", note_id)
-    return False
-
-
-def get_due_note_reminders(now: str) -> list[dict]:
-    """
-    Phase 11.19: активные заметки с напоминанием ≤ now, ещё не отправлены.
-    Используется планировщиком. `now` — наивная UTC-строка.
-    """
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT * FROM notes WHERE deleted_at IS NULL AND reminder_sent = 0 "
-        "AND reminder_at IS NOT NULL AND reminder_at <= ? "
-        "ORDER BY reminder_at",
-        (now,),
-    )
-    rows = cursor.fetchall()
-    conn.close()
-    return [_row_to_note(r) for r in rows]
-
-
-def mark_note_reminder_sent(note_id: int) -> bool:
-    """Phase 11.19: помечает напоминание отправленным. False — нет."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "UPDATE notes SET reminder_sent = 1 WHERE id = ?", (note_id,)
-    )
-    rows = cursor.rowcount
-    conn.commit()
-    conn.close()
-    if rows > 0:
-        logger.info("note=%s reminder_sent=1", note_id)
-        return True
-    logger.warning("mark_note_reminder_sent: note=%s not found", note_id)
-    return False
+# Phase 11.22 (#9): функции напоминаний для заметок удалены – заметки
+# по смыслу пишутся без напоминаний. Колонки notes.reminder_at /
+# reminder_sent остаются в схеме (миграция идемпотентна), но не
+# используются.
 
 
 def delete_note(note_id: int) -> bool:
@@ -2289,7 +2233,7 @@ def purge_deleted_notes(older_than_hours: int = 24) -> int:
 
 def search_notes(user_id: int, query: str) -> list[dict]:
     """
-    Phase 11.2: поиск по заметкам — подстрока в title или body
+    Phase 11.2: поиск по заметкам – подстрока в title или body
     (case-insensitive, python-side для кириллицы). Закреплённые
     выводятся сначала.
     """
@@ -2319,10 +2263,10 @@ def search_notes(user_id: int, query: str) -> list[dict]:
 
 def set_task_note(task_id: int, note_id: int | None) -> bool:
     """
-    Привязывает задачу к заметке. `note_id=None` — отвязать.
+    Привязывает задачу к заметке. `note_id=None` – отвязать.
     Не валидирует ownership самостоятельно: вызывающий webapp.py уже
     проверяет, что и task и note принадлежат пользователю (через
-    `_require_own_task` / `_require_own_note`). False — задачи нет.
+    `_require_own_task` / `_require_own_note`). False – задачи нет.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -2343,7 +2287,7 @@ def get_tasks_linked_to_note(user_id: int, note_id: int) -> list[dict]:
     """
     Активные задачи пользователя, связанные с заметкой `note_id`.
     Используется в Mini App для показа «эта заметка упоминается в N
-    задачах». Выполненные не показываем — обычно перетекают
+    задачах». Выполненные не показываем – обычно перетекают
     в архив, незачем там лазить.
     """
     conn = get_connection()

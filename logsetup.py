@@ -3,13 +3,13 @@
 
 Цели:
 - Один формат во всех процессах (`bot.py`, `webapp.py`).
-- StreamHandler в stdout — попадает в systemd journal автоматически.
-- RotatingFileHandler (опционально) — файл `<LOG_DIR>/<name>.log`
+- StreamHandler в stdout – попадает в systemd journal автоматически.
+- RotatingFileHandler (опционально) – файл `<LOG_DIR>/<name>.log`
   с ротацией 5×10 МБ, чтобы /var/log не разрастался на VPS.
 - Глушение шумных сторонних логгеров (`httpx` пишет URL запроса к
-  Telegram API с токеном бота — обязательно к WARNING).
+  Telegram API с токеном бота – обязательно к WARNING).
 
-`LOG_DIR` берётся из env. Если не задан или путь недоступен — файловое
+`LOG_DIR` берётся из env. Если не задан или путь недоступен – файловое
 логирование молча отключается (только stdout), чтобы не падать при
 локальной разработке без прав на /var/log.
 """
@@ -28,12 +28,12 @@ _NOISY_LOGGERS = ("httpx", "httpcore", "apscheduler", "telegram")
 def setup_logging(name: str, level: int = logging.INFO) -> None:
     """
     Конфигурирует root-логгер для процесса `name` (например `"bot"`
-    или `"webapp"`). Идемпотентно — повторный вызов не дублирует
+    или `"webapp"`). Идемпотентно – повторный вызов не дублирует
     хендлеры. Возвращает None; модули как обычно тянут именованные
     логгеры через `logging.getLogger(__name__)`.
     """
     root = logging.getLogger()
-    # Идемпотентность: если уже сконфигурировано нашим маркером —
+    # Идемпотентность: если уже сконфигурировано нашим маркером –
     # перенастраивать не нужно (например, gunicorn перезаражает модуль).
     if getattr(root, "_bot_reminder_configured", False):
         return
@@ -46,7 +46,7 @@ def setup_logging(name: str, level: int = logging.INFO) -> None:
     sh.setFormatter(formatter)
     root.addHandler(sh)
 
-    # Файл с ротацией — только если LOG_DIR задан и доступен на запись.
+    # Файл с ротацией – только если LOG_DIR задан и доступен на запись.
     log_dir = os.environ.get("LOG_DIR")
     if log_dir:
         try:

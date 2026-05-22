@@ -1,7 +1,7 @@
 """Фаза 5.2: тесты списков/категорий (БД, миграция).
 
-С Phase 11.1 чат-команды убраны — соответствующие тесты тоже. Слой БД
-покрывается этим файлом; пользовательские сценарии — в `test_webapp.py`.
+С Phase 11.1 чат-команды убраны – соответствующие тесты тоже. Слой БД
+покрывается этим файлом; пользовательские сценарии – в `test_webapp.py`.
 """
 import sqlite3
 from unittest.mock import patch
@@ -42,8 +42,8 @@ def test_rename_list():
 
 def test_delete_list_is_soft_with_undo_window():
     """
-    Phase 10.7: delete_list — soft. Список скрывается из get_lists,
-    но задачи СОХРАНЯЮТ list_id (на время undo-окна). Hard-удаление —
+    Phase 10.7: delete_list – soft. Список скрывается из get_lists,
+    но задачи СОХРАНЯЮТ list_id (на время undo-окна). Hard-удаление –
     через `purge_deleted_lists` после 24 часов.
     """
     lid = create_list(1, "L")
@@ -52,13 +52,13 @@ def test_delete_list_is_soft_with_undo_window():
     assert [t["id"] for t in get_tasks_by_list(1, lid)] == [tid]
 
     assert delete_list(lid) is True
-    # Из get_lists() (видимых) — исчез
+    # Из get_lists() (видимых) – исчез
     assert get_lists(1) == []
-    # С include_deleted=True — виден, deleted_at заполнен
+    # С include_deleted=True – виден, deleted_at заполнен
     all_lists = get_lists(1, include_deleted=True)
     assert len(all_lists) == 1
     assert all_lists[0]["deleted_at"] is not None
-    # Задача сохранила привязку — не переехала в «без списка»
+    # Задача сохранила привязку – не переехала в «без списка»
     assert [t["id"] for t in get_tasks_by_list(1, None)] == []
     assert [t["id"] for t in get_tasks_by_list(1, lid)] == [tid]
     # Повторный delete (уже удалённого) → False
