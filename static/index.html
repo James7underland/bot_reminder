@@ -271,6 +271,10 @@
   .bulk-bar{display:flex;gap:8px;align-items:center;
     padding:8px 16px;background:var(--card);
     border-bottom:1px solid var(--hint);position:sticky;top:0;z-index:50}
+  /* Phase 11.25: `display:flex` перебивал атрибут [hidden] (равная
+     специфичность, автор > UA), из-за чего бар висел всегда: показывал
+     «0 выбрано» и не прятался по «Отмене». Делаем [hidden] главнее. */
+  .bulk-bar[hidden]{display:none}
   .bulk-bar #bulkCount{flex:1;font-size:14px;color:var(--text)}
   .bulk-bar button{padding:6px 10px;font-size:16px}
   body.select-mode .drag-handle,
