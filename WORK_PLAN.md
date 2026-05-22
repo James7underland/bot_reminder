@@ -600,6 +600,18 @@ Mini App» + «Нужно добавить раздел с заметками (�
 #3 «Вернуть» в архиве, #4 формат даты ДД.ММ.ГГГГ, #5 сброс полей при
 выполнении, #6 баг фантомного выделения, #7 уведомления без кнопок.
 
+- **11.23-PR6 ✅:** Повторная попытка fullscreen через Bot API 8.0 (#1).
+  После включения Main App в BotFather (reminderr.ru) возвращаем кнопку
+  ⛶ в шапке. `_setupFullscreen()`: показывается только если
+  `tg.requestFullscreen` есть и `tg.isVersionAtLeast('8.0')`. Клик
+  переключает `requestFullscreen`/`exitFullscreen`; подписка на
+  `fullscreenChanged` (меняет иконку maximize↔minimize, body-класс
+  `tg-fullscreen`) и `fullscreenFailed` (тост с причиной, кроме
+  ALREADY_FULLSCREEN). CSS: в `tg-fullscreen` шапка сдвигается на
+  safe-area (`--tg-safe-area-inset-top`/`env(safe-area-inset-top)`),
+  чтобы не уезжать под чёлку/статус-бар. На клиентах < 8.0 кнопка
+  просто скрыта (graceful degradation, проверено в preview). Чисто
+  фронт. (Альтернатива без кода: Launch Mode → Fullscreen в BotFather.)
 - **11.23-PR5 ✅:** Сброс полей при выполнении + уведомления без кнопок
   (#5, #7). #5: `complete_task` теперь при переводе в архив очищает
   `deadline`, `reminder_at`, `important` и сбрасывает `reminder_sent`/
