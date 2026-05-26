@@ -4,6 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Напоминалка</title>
+<!-- Phase 12.0: PWA — устанавливаемое десктоп/мобильное приложение. -->
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#2481cc">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.svg">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   :root{
@@ -560,6 +565,82 @@ function getInitData() {
 }
 const INIT = getInitData();
 
+// --- Phase 12.0: PWA / десктоп-режим вне Telegram ---
+// Если приложение запущено как PWA или просто в браузере (нет
+// initData), авторизация идёт по долгоживущему API-токену из БД.
+// Токен выдаётся в боте командой /token и хранится в localStorage.
+const _TOKEN_KEY = "bot_reminder_api_token";
+
+function _getApiToken() {
+  try { return localStorage.getItem(_TOKEN_KEY) || ""; } catch { return ""; }
+}
+
+function _setApiToken(v) {
+  try { localStorage.setItem(_TOKEN_KEY, v); } catch {}
+}
+
+function _clearApiToken() {
+  try { localStorage.removeItem(_TOKEN_KEY); } catch {}
+}
+
+function _authHeaders() {
+  // Внутри Telegram приоритет — initData (подпись валидируется HMAC'ом
+  // на каждом запросе). Вне Telegram — long-lived token.
+  const init = getInitData();
+  if (init) return {"X-Init-Data": init};
+  const tok = _getApiToken();
+  if (tok) return {"X-API-Token": tok};
+  return {};
+}
+
+// Кастомный модал ввода токена (нативный prompt падает в WebView).
+function _promptApiToken(message) {
+  return new Promise((resolve) => {
+    const back = document.createElement("div");
+    back.className = "modal-back";
+    back.innerHTML =
+      '<div class="modal" style="max-width:480px">' +
+        '<div class="modal-title">Войти в Напоминалку</div>' +
+        '<p style="color:var(--hint);font-size:14px;margin:0 0 12px">' +
+          (message ||
+            'Получи API-токен в боте командой <code>/token</code> и ' +
+            'вставь сюда. Это нужно только один раз — токен сохранится ' +
+            'в этом приложении.') +
+        '</p>' +
+        '<input class="modal-token-input" type="text" autocomplete="off" ' +
+          'placeholder="64 символа" ' +
+          'style="width:100%;padding:10px;border-radius:8px;' +
+            'border:1px solid var(--sec);background:var(--sec);' +
+            'color:var(--text);font-family:monospace;font-size:13px">' +
+        '<div class="modal-btns">' +
+          '<button class="modal-ok">Сохранить</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(back);
+    const inp = back.querySelector(".modal-token-input");
+    setTimeout(() => inp.focus(), 50);
+    function submit() {
+      const v = (inp.value || "").trim();
+      if (!v) return;
+      _setApiToken(v);
+      back.parentNode && back.parentNode.removeChild(back);
+      resolve(v);
+    }
+    back.querySelector(".modal-ok").onclick = submit;
+    inp.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") submit();
+    });
+  });
+}
+
+// Регистрация service worker'а — даёт оффлайн-shell + кнопку «Install»
+// в Chrome/Edge. Ошибки игнорируем (на http:// SW не работает).
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+  });
+}
+
 // --- Модалы. Нативные window.alert/prompt/confirm в Telegram WebApp
 // работают нестабильно (фокус не возвращается → менюшки «залипают»).
 // Используем Telegram.WebApp.showAlert/showPopup, для ввода – кастомный
@@ -738,10 +819,11 @@ async function api(path, opts={}) {
       ...opts,
       headers: {
         "Content-Type": "application/json",
-        // Перечитываем initData при каждом запросе (Phase 11.3): на
-        // некоторых клиентах TG поле дозаполняется уже после первого
-        // тика; снимок при загрузке мог быть пустым.
-        "X-Init-Data": getInitData() || INIT,
+        // Phase 12.0: подставляем либо X-Init-Data (внутри Telegram),
+        // либо X-API-Token (PWA / десктоп). Перечитываем КАЖДЫЙ раз —
+        // initData может дозаполниться после первого тика (Phase 11.3),
+        // а токен — поменяться через /regen_token.
+        ..._authHeaders(),
         ...(opts.headers || {}),
       },
     });
@@ -751,11 +833,23 @@ async function api(path, opts={}) {
     throw e;
   }
   if (r.status === 401) {
-    // Phase 11.3: вместо пустого «Откройте из Telegram» – даём
-    // диагностику. Чаще всего issue в одной из двух точек:
-    //   1) initData пуст → запустили вне Telegram
-    //   2) hash mismatch → токен в .env не совпадает с подписью TG
-    //      (бот пересоздавался, .env не обновили)
+    // Phase 12.0: вне Telegram (PWA) — токен битый/истёк → перезапросить.
+    if (!getInitData()) {
+      // Если несколько параллельных запросов словили 401 одновременно —
+      // показываем модал только из первого, остальные просто отваливаются.
+      if (!window._tokenPromptInFlight) {
+        window._tokenPromptInFlight = true;
+        _clearApiToken();
+        const hadToken = !!_getApiToken();      // false на самом первом запуске
+        await _promptApiToken(hadToken
+          ? "Токен не подошёл. Получи свежий: /token (или /regen_token)."
+          : null);
+        location.reload();
+      }
+      throw new Error("auth: prompting token");
+    }
+    // Внутри Telegram — диагностика (Phase 11.3): либо initData пуст,
+    // либо hash mismatch (токен в .env не совпадает с подписью TG).
     const initLen = (getInitData() || "").length;
     const platform = tg ? (tg.platform || "?") : "no-tg";
     document.body.innerHTML =
@@ -1616,7 +1710,7 @@ $("#tzBtn").onclick = async () => {
   if (!picked || picked === cur) return;
   const r = await fetch("/api/settings", {
     method:"PUT",
-    headers:{"Content-Type":"application/json","X-Init-Data":INIT},
+    headers:{"Content-Type":"application/json", ..._authHeaders()},
     body: JSON.stringify({timezone: picked}),
   });
   if (r.status === 422) await uiAlert("Неверный часовой пояс");

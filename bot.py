@@ -28,7 +28,11 @@ from telegram.ext import (
 )
 
 from config import MINI_APP_URL, TELEGRAM_BOT_TOKEN, is_user_allowed
-from database import init_db
+from database import (
+    create_or_get_api_token,
+    init_db,
+    regenerate_api_token,
+)
 from logsetup import setup_logging
 from scheduler import setup_scheduler
 
@@ -161,12 +165,62 @@ async def error_handler(
     )
 
 
+# --- Phase 12.0: API-токен для PWA / десктоп-клиента ---
+
+def _token_text(token: str, *, regenerated: bool) -> str:
+    prefix = "Новый API-токен (старый больше не работает):" if regenerated \
+        else "Твой API-токен для PWA / десктоп-приложения:"
+    return (
+        f"{prefix}\n\n"
+        f"`{token}`\n\n"
+        f"Открой Mini App вне Telegram (через установленное PWA или в "
+        f"браузере на app.reminderr.ru) — там появится поле «Введи "
+        f"токен». Вставь эту строку, и приложение будет работать.\n\n"
+        f"Если токен утёк — /regen_token, старый сразу инвалидируется."
+    )
+
+
+async def token_cmd(
+    update: Update, context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """`/token` — выдаёт существующий токен или создаёт новый. Идемпотентно."""
+    if update.effective_message is None:
+        return
+    if not _user_allowed(update):
+        await update.effective_message.reply_text(_DENIED_TEXT)
+        return
+    user_id = update.effective_user.id
+    token = create_or_get_api_token(user_id)
+    await update.effective_message.reply_text(
+        _token_text(token, regenerated=False), parse_mode="Markdown"
+    )
+
+
+async def regen_token_cmd(
+    update: Update, context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """`/regen_token` — выпускает НОВЫЙ токен, старый перестаёт работать."""
+    if update.effective_message is None:
+        return
+    if not _user_allowed(update):
+        await update.effective_message.reply_text(_DENIED_TEXT)
+        return
+    user_id = update.effective_user.id
+    token = regenerate_api_token(user_id)
+    await update.effective_message.reply_text(
+        _token_text(token, regenerated=True), parse_mode="Markdown"
+    )
+
+
 # --- Запуск (исключён из coverage, требует Telegram-сети) ---
 
 # Phase 11.11: команды, которые Telegram показывает в `/`-автокомплите.
+# Phase 12.0: + /token и /regen_token для PWA / десктоп-клиента.
 _BOT_COMMANDS = [
     BotCommand("start", "Открыть Mini App"),
     BotCommand("help", "Что умеет бот"),
+    BotCommand("token", "API-токен для PWA / десктопа"),
+    BotCommand("regen_token", "Перевыпустить токен"),
 ]
 
 
@@ -209,6 +263,8 @@ def main() -> None:  # pragma: no cover
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", start))
+    application.add_handler(CommandHandler("token", token_cmd))
+    application.add_handler(CommandHandler("regen_token", regen_token_cmd))
     # Любой не-командный текст / голос / фото / документ → fallback.
     application.add_handler(
         MessageHandler(filters.ALL & ~filters.COMMAND, fallback_text)

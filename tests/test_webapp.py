@@ -2622,3 +2622,41 @@ def test_db_complete_clears_deadline_reminder_importance():
     mark_task_undone(tid)
     assert get_due_reminders("2026-01-01 00:00:00") == []
     assert get_overdue_tasks("2026-01-01 00:00:00") == []
+
+
+# --- Phase 12.0: API-токены + dual-auth (PWA / десктоп-клиент) ---
+
+def test_db_create_or_get_api_token_idempotent():
+    """Phase 12.0: повторный вызов отдаёт тот же токен."""
+    from database import create_or_get_api_token, find_user_by_api_token
+    t1 = create_or_get_api_token(8001)
+    t2 = create_or_get_api_token(8001)
+    assert t1 == t2 and len(t1) == 64
+    assert find_user_by_api_token(t1) == 8001
+
+
+def test_db_regenerate_api_token_invalidates_old():
+    """Phase 12.0: regen выдаёт новый токен, старый перестаёт работать."""
+    from database import (
+        create_or_get_api_token,
+        find_user_by_api_token,
+        regenerate_api_token,
+    )
+    old = create_or_get_api_token(8002)
+    new = regenerate_api_token(8002)
+    assert new != old and len(new) == 64
+    assert find_user_by_api_token(new) == 8002
+    assert find_user_by_api_token(old) is None       # старый отозван
+
+
+def test_api_token_auth_replaces_init_data(client):
+    """Phase 12.0: запрос с X-API-Token авторизуется без X-Init-Data."""
+    from database import create_or_get_api_token
+    token = create_or_get_api_token(8003)
+    r = client.get("/api/tasks", headers={"X-API-Token": token})
+    assert r.status_code == 200 and r.json() == []
+    # Битый токен → 401, отсутствие обоих заголовков → 401.
+    assert client.get(
+        "/api/tasks", headers={"X-API-Token": "bad"}
+    ).status_code == 401
+    assert client.get("/api/tasks").status_code == 401
