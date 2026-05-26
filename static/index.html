@@ -133,6 +133,10 @@
   header{padding:10px 8px 6px;font-size:20px;font-weight:700;
     display:flex;align-items:center;gap:4px;
     border-bottom:1px solid rgba(127,127,127,.12)}
+  /* Phase 11.29: в fullscreen-режиме (Bot API 8.0) контент уезжает
+     под верхнюю системную область — компенсируем через safe-area. */
+  body.tg-fullscreen header{
+    padding-top:calc(10px + var(--tg-safe-area-inset-top, env(safe-area-inset-top, 0px)));}
   header h1{flex:1;margin:0;font-size:inherit;font-weight:inherit;
     padding-left:4px}
   .stats-badge{font-size:13px;font-weight:500;color:var(--hint);
@@ -350,6 +354,9 @@
   <button id="navBtn" class="icon-btn" title="Меню" data-icon="menu"></button>
   <h1 id="appTitle">Мои задачи</h1>
   <div id="statsBadge" class="stats-badge" hidden title="Статистика">…</div>
+  <!-- Phase 11.29: кнопка-toggle полноэкранного режима (Bot API 8.0).
+       Скрыта на клиентах < 8.0 (см. _setupFullscreen). -->
+  <button id="fsBtn" class="icon-btn" title="На весь экран" data-icon="maximize" hidden></button>
   <button id="moreBtn" class="icon-btn" title="Ещё" data-icon="more"></button>
 </header>
 
@@ -537,21 +544,56 @@ const IS_DESKTOP = tg
   : false;
 
 // Mini App: tg.ready()/expand() + body-класс is-desktop/is-mobile.
-// Phase 11.28: откат авто-fullscreen из PR #74 — Bot API 8.0
-// `requestFullscreen` даёт безоконный режим без resize, а нужно
-// «большое окно с возможностью уменьшить». Размер окна на ПК задаётся
-// в BotFather → Configure Mini App → Launch Mode (Fullsize = большое
-// окно, изменяемое). Если клиент почему-то застрял в fullscreen
-// (запомнил состояние с прошлой сессии) — принудительно выходим.
+// Phase 11.29: на ПК автоматически разворачиваем во весь экран (Bot
+// API 8.0) при запуске И даём кнопку-toggle в шапке, чтобы свернуть
+// обратно в обычное окно. На мобильных — без изменений (там и так
+// fullscreen, и кнопка ничего не меняет).
 function _setupWindowMode() {
   if (!tg) return;
   tg.ready();
   document.body.classList.add(IS_DESKTOP ? "is-desktop" : "is-mobile");
   if (IS_DESKTOP) {
     try { tg.expand(); } catch {}
-    if (tg.isFullscreen && typeof tg.exitFullscreen === "function") {
-      try { tg.exitFullscreen(); } catch {}
-    }
+    _setupFullscreen();
+  }
+}
+
+function _setupFullscreen() {
+  const btn = document.getElementById("fsBtn");
+  if (!tg || !btn) return;
+  // Bot API 8.0 — единственный способ; на старых клиентах кнопка не
+  // нужна, fullscreen всё равно не сработает.
+  const supported = typeof tg.requestFullscreen === "function" &&
+    (!tg.isVersionAtLeast || tg.isVersionAtLeast("8.0"));
+  if (!supported) { btn.hidden = true; return; }
+  btn.hidden = false;
+
+  function sync() {
+    const fs = !!tg.isFullscreen;
+    document.body.classList.toggle("tg-fullscreen", fs);
+    btn.dataset.icon = fs ? "minimize" : "maximize";
+    btn.title = fs ? "Свернуть" : "На весь экран";
+    applyIcons(btn.parentElement);   // dataset.icon изменился
+  }
+
+  btn.onclick = () => {
+    try {
+      if (tg.isFullscreen) tg.exitFullscreen();
+      else tg.requestFullscreen();
+    } catch {}
+  };
+
+  try { tg.onEvent("fullscreenChanged", sync); } catch {}
+  // fullscreenFailed (ALREADY_FULLSCREEN/UNSUPPORTED) — тихо
+  // ресинкаем иконку, без тостов.
+  try { tg.onEvent("fullscreenFailed", sync); } catch {}
+
+  sync();
+
+  // Автозапуск на весь экран при старте. Если клиент откажет, иконка
+  // через `fullscreenFailed` останется в состоянии maximize.
+  if (!tg.isFullscreen) {
+    try { tg.requestFullscreen(); } catch {}
   }
 }
 _setupWindowMode();
