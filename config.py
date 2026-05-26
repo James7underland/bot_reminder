@@ -31,7 +31,13 @@ SCHEDULER_CHECK_INTERVAL = int(os.environ.get("SCHEDULER_CHECK_INTERVAL", "60"))
 # URL Mini App для кнопки в /start (Phase 11.1: команды убрали, остался
 # только запуск Mini App). Должен быть HTTPS, иначе Telegram не покажет
 # WebApp-кнопку.
-MINI_APP_URL = os.environ.get("MINI_APP_URL", "https://reminderr.ru/")
+# Phase 11.26: дефолт обновлён на app.reminderr.ru. Раньше домен
+# reminderr.ru указывал на Mini App; теперь это отдельный сайт
+# (Pterodactyl), а Mini App переехал на поддомен app.reminderr.ru.
+# Если на проде `.env` не задавал MINI_APP_URL, бот при каждом старте
+# через `set_chat_menu_button` ставил глобальную кнопку «Открыть» на
+# старый домен → пользователь иногда попадал на чужой сайт.
+MINI_APP_URL = os.environ.get("MINI_APP_URL", "https://app.reminderr.ru/")
 
 
 def _parse_allowlist(raw: str) -> set:
