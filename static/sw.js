@@ -5,11 +5,15 @@
 // - Стратегия: network-first (с фоновой записью в кеш); если сети
 //   нет — отдаём из кеша.
 
-const CACHE = "reminderr-shell-v1";
+// Bump version при изменении манифеста или статики, чтобы старый SW
+// сбросил кеш у пользователей.
+const CACHE = "reminderr-shell-v2";
 const CORE = [
   "/",
   "/manifest.webmanifest",
   "/icon.svg",
+  "/icon-192.png",
+  "/icon-512.png",
 ];
 
 self.addEventListener("install", (e) => {
