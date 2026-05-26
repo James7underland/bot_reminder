@@ -75,11 +75,14 @@ PostgreSQL вынесена в отдельную фазу: SQL изолиров
 ## 6. Telegram Mini App – SNI-роутер на :443 (Фаза 8.8)
 
 `webapp.py` слушает `127.0.0.1:8080`. На :443 – nginx `stream` +
-`ssl_preread`: по SNI отдаёт `reminderr.ru` в Caddy (HTTPS
+`ssl_preread`: по SNI отдаёт `app.reminderr.ru` в Caddy (HTTPS
 :8443 → webapp), всё прочее – в xray (VPN). Конфиг xray не меняется,
 меняется только порт его публикации в Docker.
 
-Предусловия: A-запись `reminderr.ru` → IP VPS; открыты 80/443.
+Предусловия: A-запись `app.reminderr.ru` → IP VPS; открыты 80/443.
+(С Phase 11.26: домен Mini App — поддомен `app.reminderr.ru`. Корневой
+`reminderr.ru` теперь — отдельный сайт, в SNI-роутинге Mini App не
+участвует.)
 
 **6.1. Сервис webapp:**
 ```bash
@@ -126,13 +129,14 @@ nginx -t && systemctl restart nginx
 
 **6.5. Проверка:**
 ```bash
-curl -sI https://reminderr.ru/healthz | head -1   # HTTP/2 200
+curl -sI https://app.reminderr.ru/healthz | head -1   # HTTP/2 200
 ```
 И отдельно проверить, что VPN-клиент по-прежнему подключается.
 
 **6.6. Регистрация в @BotFather:** `/mybots` → бот → Bot Settings →
-Menu Button → URL `https://reminderr.ru`. После этого
-`cloudflared-quick` можно отключить:
+Menu Button → URL `https://app.reminderr.ru`. Также при включённом
+Main App: Configure Mini App → URL `https://app.reminderr.ru/`. После
+этого `cloudflared-quick` можно отключить:
 `systemctl disable --now cloudflared-quick`.
 
 **6.7. Откат:** `systemctl stop nginx`; пересоздать `amnezia-xray` из
