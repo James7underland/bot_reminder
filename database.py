@@ -4,6 +4,7 @@
 import calendar
 import logging
 import re
+import secrets
 import sqlite3
 from datetime import UTC, datetime, timedelta
 
@@ -182,6 +183,16 @@ def init_db():
         cursor.execute(
             "ALTER TABLE notes ADD COLUMN reminder_sent INTEGER NOT NULL DEFAULT 0"
         )
+    # Phase 12.0: долгоживущие API-токены для PWA / десктоп-клиента
+    # (когда initData недоступен — приложение запущено вне Telegram).
+    # Один user_id → один токен (regenerate заменяет).
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS api_tokens (
+            user_id INTEGER PRIMARY KEY,
+            token TEXT NOT NULL UNIQUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована.")
@@ -2316,3 +2327,64 @@ def get_tasks_linked_to_note(user_id: int, note_id: int) -> list[dict]:
         t["important"] = bool(t["important"])
         out.append(t)
     return out
+
+
+# --- Phase 12.0: API-токены для PWA / десктоп-клиента ---
+
+def _new_token() -> str:
+    """64-символьная криптостойкая строка (32 байта hex)."""
+    return secrets.token_hex(32)
+
+
+def create_or_get_api_token(user_id: int) -> str:
+    """Возвращает существующий токен пользователя или создаёт новый.
+    Один user_id → один активный токен; повторный вызов идемпотентен."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT token FROM api_tokens WHERE user_id = ?", (user_id,)
+    )
+    row = cursor.fetchone()
+    if row is not None:
+        conn.close()
+        return row[0]
+    token = _new_token()
+    cursor.execute(
+        "INSERT INTO api_tokens (user_id, token) VALUES (?, ?)",
+        (user_id, token),
+    )
+    conn.commit()
+    conn.close()
+    logger.info("api token created for user=%s", user_id)
+    return token
+
+
+def regenerate_api_token(user_id: int) -> str:
+    """Заменяет токен новым; старый сразу становится недействительным."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    token = _new_token()
+    cursor.execute(
+        "INSERT INTO api_tokens (user_id, token) VALUES (?, ?) "
+        "ON CONFLICT(user_id) DO UPDATE SET token = excluded.token, "
+        "created_at = CURRENT_TIMESTAMP",
+        (user_id, token),
+    )
+    conn.commit()
+    conn.close()
+    logger.info("api token regenerated for user=%s", user_id)
+    return token
+
+
+def find_user_by_api_token(token: str) -> int | None:
+    """Возвращает user_id по предъявленному токену; None если не найден."""
+    if not token or len(token) != 64:
+        return None
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT user_id FROM api_tokens WHERE token = ?", (token,)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return int(row[0]) if row else None

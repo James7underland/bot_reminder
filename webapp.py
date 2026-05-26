@@ -36,6 +36,7 @@ from database import (
     delete_step,
     delete_task,
     export_user_data,
+    find_user_by_api_token,
     get_archived_tasks,
     get_global_counts,
     get_important_tasks,
@@ -144,17 +145,36 @@ def validate_init_data(init_data: str, bot_token: str) -> dict | None:
     return user
 
 
-async def current_user_id(x_init_data: str = Header(default="")) -> int:
+async def current_user_id(
+    x_init_data: str = Header(default=""),
+    x_api_token: str = Header(default=""),
+) -> int:
     """
-    FastAPI-зависимость: валидирует initData и проверяет allowlist
-    (Phase 11.3). 401 – если подпись битая ИЛИ пользователя нет в
-    allowlist.
+    FastAPI-зависимость: авторизует запрос одним из двух способов
+    (Phase 12.0):
+    1) `X-Init-Data` — подпись от Telegram WebApp (Mini App внутри
+       Telegram, основной путь);
+    2) `X-API-Token` — долгоживущий токен из БД (PWA / десктоп-клиент
+       вне Telegram). Токен выдаётся в боте командой `/token`.
+
+    Allowlist (Phase 11.3) проверяется ПОСЛЕ установления user_id —
+    одинаково для обоих путей. 401 — подпись/токен битые или ничего не
+    передано. 403 — пользователя нет в allowlist.
     """
-    user = validate_init_data(x_init_data, config.TELEGRAM_BOT_TOKEN or "")
-    if user is None:
-        raise HTTPException(status_code=401, detail="invalid init data")
-    user_id = int(user["id"])
-    username = user.get("username")
+    username: str | None = None
+    if x_init_data:
+        user = validate_init_data(x_init_data, config.TELEGRAM_BOT_TOKEN or "")
+        if user is None:
+            raise HTTPException(status_code=401, detail="invalid init data")
+        user_id = int(user["id"])
+        username = user.get("username")
+    elif x_api_token:
+        uid = find_user_by_api_token(x_api_token.strip())
+        if uid is None:
+            raise HTTPException(status_code=401, detail="invalid api token")
+        user_id = uid
+    else:
+        raise HTTPException(status_code=401, detail="missing auth header")
     if not config.is_user_allowed(user_id, username):
         logger.warning(
             "access denied: user_id=%s username=%s not in allowlist",
