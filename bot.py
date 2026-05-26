@@ -168,22 +168,26 @@ async def error_handler(
 # --- Phase 12.0: API-токен для PWA / десктоп-клиента ---
 
 def _token_text(token: str, *, regenerated: bool) -> str:
+    """HTML-форматирование (Phase 12.0.1): legacy Markdown ловил `_` в
+    `/regen_token` как незакрытый italic и валился с
+    `Can't parse entities`. HTML надёжнее — поддерживает `<code>` без
+    спецсимволов внутри (токен — чистый hex, экранировать нечего)."""
     prefix = "Новый API-токен (старый больше не работает):" if regenerated \
         else "Твой API-токен для PWA / десктоп-приложения:"
     return (
         f"{prefix}\n\n"
-        f"`{token}`\n\n"
+        f"<code>{token}</code>\n\n"
         f"Открой Mini App вне Telegram (через установленное PWA или в "
-        f"браузере на app.reminderr.ru) — там появится поле «Введи "
+        f"браузере на app.reminderr.ru) – там появится поле «Введи "
         f"токен». Вставь эту строку, и приложение будет работать.\n\n"
-        f"Если токен утёк — /regen_token, старый сразу инвалидируется."
+        f"Если токен утёк – /regen_token, старый сразу инвалидируется."
     )
 
 
 async def token_cmd(
     update: Update, context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """`/token` — выдаёт существующий токен или создаёт новый. Идемпотентно."""
+    """`/token` – выдаёт существующий токен или создаёт новый. Идемпотентно."""
     if update.effective_message is None:
         return
     if not _user_allowed(update):
@@ -192,14 +196,14 @@ async def token_cmd(
     user_id = update.effective_user.id
     token = create_or_get_api_token(user_id)
     await update.effective_message.reply_text(
-        _token_text(token, regenerated=False), parse_mode="Markdown"
+        _token_text(token, regenerated=False), parse_mode="HTML"
     )
 
 
 async def regen_token_cmd(
     update: Update, context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """`/regen_token` — выпускает НОВЫЙ токен, старый перестаёт работать."""
+    """`/regen_token` – выпускает НОВЫЙ токен, старый перестаёт работать."""
     if update.effective_message is None:
         return
     if not _user_allowed(update):
@@ -208,7 +212,7 @@ async def regen_token_cmd(
     user_id = update.effective_user.id
     token = regenerate_api_token(user_id)
     await update.effective_message.reply_text(
-        _token_text(token, regenerated=True), parse_mode="Markdown"
+        _token_text(token, regenerated=True), parse_mode="HTML"
     )
 
 
