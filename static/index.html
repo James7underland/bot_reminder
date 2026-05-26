@@ -573,25 +573,59 @@ function _setupFullscreen() {
     document.body.classList.toggle("tg-fullscreen", fs);
     btn.dataset.icon = fs ? "minimize" : "maximize";
     btn.title = fs ? "Свернуть" : "На весь экран";
-    applyIcons(btn.parentElement);   // dataset.icon изменился
+    applyIcons(btn.parentElement);
+  }
+
+  // Phase 11.30: если клиент молча игнорирует requestFullscreen
+  // (Telegram Desktop пока без 8.0-fullscreen), показываем алерт с
+  // диагностикой только на ПОЛЬЗОВАТЕЛЬСКОМ клике (не на авто-старте).
+  let lastFailReason = null;
+  function _showDiagnostic(reason) {
+    const lines = [
+      "Полноэкранный режим не сработал.",
+      "version: " + (tg.version || "?"),
+      "platform: " + (tg.platform || "?"),
+      "isVersionAtLeast(8.0): " +
+        (tg.isVersionAtLeast ? tg.isVersionAtLeast("8.0") : "n/a"),
+      "reason: " + (reason || "client ignored call"),
+      "",
+      "Обходной путь: в @BotFather → Configure Mini App →",
+      "Launch Mode выбрать «Fullscreen» (без кода).",
+    ];
+    if (tg.showAlert) tg.showAlert(lines.join("\n"));
   }
 
   btn.onclick = () => {
+    const before = !!tg.isFullscreen;
+    lastFailReason = null;
     try {
-      if (tg.isFullscreen) tg.exitFullscreen();
+      if (before) tg.exitFullscreen();
       else tg.requestFullscreen();
-    } catch {}
+    } catch (e) {
+      _showDiagnostic("exception: " + (e && e.message || e));
+      return;
+    }
+    // Через 400 мс проверяем — если состояние не поменялось и
+    // fullscreenFailed не пришёл, значит клиент тихо проигнорировал.
+    setTimeout(() => {
+      if (!!tg.isFullscreen === before && lastFailReason === null) {
+        _showDiagnostic(null);
+      }
+    }, 400);
   };
 
   try { tg.onEvent("fullscreenChanged", sync); } catch {}
-  // fullscreenFailed (ALREADY_FULLSCREEN/UNSUPPORTED) — тихо
-  // ресинкаем иконку, без тостов.
-  try { tg.onEvent("fullscreenFailed", sync); } catch {}
+  try {
+    tg.onEvent("fullscreenFailed", (e) => {
+      lastFailReason = (e && e.error) || "FAILED";
+      sync();
+    });
+  } catch {}
 
   sync();
 
-  // Автозапуск на весь экран при старте. Если клиент откажет, иконка
-  // через `fullscreenFailed` останется в состоянии maximize.
+  // Автозапуск на весь экран — пробуем тихо, без алертов в случае
+  // отказа (клиент может потребовать user-gesture).
   if (!tg.isFullscreen) {
     try { tg.requestFullscreen(); } catch {}
   }
