@@ -133,6 +133,10 @@
   header{padding:10px 8px 6px;font-size:20px;font-weight:700;
     display:flex;align-items:center;gap:4px;
     border-bottom:1px solid rgba(127,127,127,.12)}
+  /* Phase 11.27: в полноэкранном режиме (Bot API 8.0) контент уезжает
+     под верхнюю системную область — компенсируем через safe-area. */
+  body.tg-fullscreen header{
+    padding-top:calc(10px + var(--tg-safe-area-inset-top, env(safe-area-inset-top, 0px)));}
   header h1{flex:1;margin:0;font-size:inherit;font-weight:inherit;
     padding-left:4px}
   .stats-badge{font-size:13px;font-weight:500;color:var(--hint);
@@ -537,14 +541,34 @@ const IS_DESKTOP = tg
   : false;
 
 // Mini App: tg.ready()/expand() + body-класс is-desktop/is-mobile.
-// Кнопку «на весь экран» убрали по просьбе пользователя (Phase 11.24).
+// Phase 11.27: на ПК автоматически разворачиваем во весь экран через
+// Bot API 8.0 (`requestFullscreen`). На неподдерживаемых клиентах
+// (< 8.0) тихо пропускаем — без кнопок, без тостов.
 function _setupWindowMode() {
   if (!tg) return;
   tg.ready();
   document.body.classList.add(IS_DESKTOP ? "is-desktop" : "is-mobile");
   if (IS_DESKTOP) {
     try { tg.expand(); } catch {}
+    _autoFullscreenIfSupported();
   }
+}
+
+function _autoFullscreenIfSupported() {
+  if (!tg) return;
+  // requestFullscreen — Bot API 8.0 / Telegram Desktop 11.5+.
+  if (typeof tg.requestFullscreen !== "function") return;
+  if (tg.isVersionAtLeast && !tg.isVersionAtLeast("8.0")) return;
+  // Реакция на смену состояния — выставляем body-класс для safe-area.
+  try {
+    tg.onEvent("fullscreenChanged", () => {
+      document.body.classList.toggle("tg-fullscreen", !!tg.isFullscreen);
+    });
+  } catch {}
+  // Игнорируем штатные ошибки (ALREADY_FULLSCREEN/UNSUPPORTED) — тихо.
+  try { tg.onEvent("fullscreenFailed", () => {}); } catch {}
+  if (tg.isFullscreen) return;          // уже развёрнуто
+  try { tg.requestFullscreen(); } catch {}
 }
 _setupWindowMode();
 

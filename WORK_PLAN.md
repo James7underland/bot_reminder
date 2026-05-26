@@ -593,6 +593,19 @@ Mini App» + «Нужно добавить раздел с заметками (�
   вырезаны handler-тесты – DB-слой остаётся, пользовательские сценарии
   живут в `test_webapp.py`. Планировщик (рассылка напоминаний и
   purge soft-deleted) сохранён. 196 тестов, TOTAL 99.30%.
+### Phase 11.27 – Авто-fullscreen на ПК (Bot API 8.0)
+
+- **11.27 ✅:** На ПК Mini App теперь автоматически разворачивается во
+  весь экран при запуске через `tg.requestFullscreen()` (Bot API 8.0).
+  Никаких кнопок (PR #71 их убрал). `_setupWindowMode` после `expand()`
+  на десктопе вызывает `_autoFullscreenIfSupported()` — guard по
+  `tg.isVersionAtLeast('8.0')` + `typeof tg.requestFullscreen === 'function'`,
+  на старых клиентах тихо пропускает. Подписка на `fullscreenChanged`
+  ставит `body.tg-fullscreen` → CSS добавляет safe-area-inset-top
+  шапке. Проверено в preview: на симулированном 8.0+ клиенте
+  `requestFullscreen` зовётся ровно 1 раз, на < 8.0 — 0 раз. (Native
+  API, без `@telegram-apps/sdk` — лишних зависимостей не добавляем.)
+
 ### Phase 11.25 – Фикс bulk-бара (всегда висел)
 
 - **11.25 ✅:** Корень бага выделения: `.bulk-bar{display:flex}` перебивал
