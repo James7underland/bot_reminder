@@ -593,6 +593,31 @@ Mini App» + «Нужно добавить раздел с заметками (�
   вырезаны handler-тесты – DB-слой остаётся, пользовательские сценарии
   живут в `test_webapp.py`. Планировщик (рассылка напоминаний и
   purge soft-deleted) сохранён. 196 тестов, TOTAL 99.30%.
+
+### Phase 13.1 – Per-task notification channels (tg / app / alarm)
+
+- **13.1 ✅:** У каждой задачи свой выбор канала уведомления: Telegram
+  (как раньше), системное OS-уведомление через Web Push, или
+  «будильник» — усиленное OS-уведомление с requireInteraction + сильной
+  вибрацией. Можно выбрать несколько одновременно.
+
+  Бэкенд: `tasks.reminder_channels` (CSV, default 'tg'), новая таблица
+  `pending_notifications` (foreground polling fallback) и
+  `push_subscriptions` (Web Push endpoints per-user). Модуль
+  `pushsend.py` — обёртка pywebpush с VAPID; лениво импортируется,
+  без VAPID → no-op, TG-канал всё ещё работает. Scheduler `_notify`
+  маршрутизирует по каналам. Новые endpoints: pending/ack,
+  push/vapid-public, push/subscribe, push/unsubscribe.
+
+  Фронт: чекбоксы каналов в панели задачи, `_ensurePushReady()` при
+  первом сохранении app/alarm (Notification.permission + VAPID +
+  pushManager.subscribe), foreground polling каждые 30с, service worker
+  обрабатывает `push`/`notificationclick`.
+
+  264 теста (+8). Ограничение: alarm = persistent OS-notification +
+  длинная вибрация, не зацикленный звонок до подтверждения (для последнего
+  нужен Capacitor + AlarmManager — отдельная фаза).
+
 ### Phase 13.0 – Native wrappers (PWA Builder для обеих платформ)
 
 - **13.0.1 ✅:** По решению пользователя обе платформы собираются через
