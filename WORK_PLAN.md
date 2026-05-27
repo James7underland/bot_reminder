@@ -593,6 +593,31 @@ Mini App» + «Нужно добавить раздел с заметками (�
   вырезаны handler-тесты – DB-слой остаётся, пользовательские сценарии
   живут в `test_webapp.py`. Планировщик (рассылка напоминаний и
   purge soft-deleted) сохранён. 196 тестов, TOTAL 99.30%.
+### Phase 13.0 – Native wrappers (Tauri + TWA)
+
+- **13.0 ✅:** Фундамент перехода от PWA к настоящим native-приложениям.
+  Подготовлены два проекта-обёртки в монорепо, оба загружают
+  `https://app.reminderr.ru/` (тот же UI, тот же бэкенд, та же
+  токен-авторизация). Native-кода в этой фазе нет — это скаффолдинг
+  под Phase 13.1+ (per-task notification routing: Telegram / ОС /
+  будильник / все).
+  - `desktop/` — Tauri 2 на Rust + Edge WebView2 для Windows.
+    `tauri.conf.json`, минимальные `lib.rs`/`main.rs`, иконка-источник
+    `icons/icon.png` (512x512). Билд локально: `cd desktop && npm
+    install && npm run tauri build` → `.msi`/`.exe` в
+    `src-tauri/target/release/bundle/`. Бандл ~5 МБ.
+  - `android/README.md` — пошаговая инструкция для PWA Builder
+    (онлайн, без локального Android SDK). Получаем подписанный APK +
+    keystore + assetlinks.json за 5 минут.
+  - `static/.well-known/assetlinks.json` — placeholder; после первой
+    PWA Builder сборки пользователь заменит fingerprint, и Chrome
+    перестанет показывать browser-bar внутри TWA. Проверено: StaticFiles
+    отдаёт его на `/.well-known/assetlinks.json` (200 + application/json).
+  - Что НЕ входит сюда: нативные ОС-уведомления, системный трей,
+    автостарт, alarms, foreground service. Всё это — следующими фазами
+    через Tauri-плагины (Windows) и переезд на Capacitor (Android)
+    когда понадобится.
+
 ### Phase 11.27 – Авто-fullscreen на ПК (Bot API 8.0)
 
 - **11.27 ✅:** На ПК Mini App теперь автоматически разворачивается во

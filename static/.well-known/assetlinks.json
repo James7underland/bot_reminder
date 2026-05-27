@@ -1,0 +1,11 @@
+[
+  {
+    "_comment": "Phase 13.0: ЗАГЛУШКА. Замени sha256_cert_fingerprints на отпечаток подписи APK после первой сборки в PWA Builder. Без этого Chrome покажет browser-bar в TWA-окне. Подробности: android/README.md",
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "ru.reminderr.android",
+      "sha256_cert_fingerprints": ["AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA"]
+    }
+  }
+]
