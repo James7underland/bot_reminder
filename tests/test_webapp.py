@@ -2660,3 +2660,165 @@ def test_api_token_auth_replaces_init_data(client):
         "/api/tasks", headers={"X-API-Token": "bad"}
     ).status_code == 401
     assert client.get("/api/tasks").status_code == 401
+
+
+# --- Phase 13.1: каналы уведомлений на задачу + push subscriptions ---
+
+
+def test_db_set_reminder_channels_normalizes():
+    """Phase 13.1: каналы дедуплицируются, мусор отфильтровывается, пустое → tg."""
+    from database import (
+        add_task,
+        get_reminder_channels,
+        set_reminder_channels,
+    )
+    t = add_task(9001, "task")
+    assert get_reminder_channels(t) == ["tg"]    # дефолт
+    assert set_reminder_channels(t, ["alarm", "tg", "junk", "app", "app"])
+    # Каноничный порядок tg, app, alarm.
+    assert get_reminder_channels(t) == ["tg", "app", "alarm"]
+    # Пустой список → fallback "tg" (нельзя оставить задачу совсем без канала).
+    assert set_reminder_channels(t, [])
+    assert get_reminder_channels(t) == ["tg"]
+
+
+def test_db_pending_notifications_lifecycle():
+    """enqueue → list → ack → list пуст."""
+    from database import (
+        ack_notification,
+        enqueue_notification,
+        get_pending_notifications,
+    )
+    nid = enqueue_notification(
+        user_id=9002, task_id=1, channel="app", kind="Напоминаю",
+        description="task body",
+    )
+    pending = get_pending_notifications(9002)
+    assert len(pending) == 1 and pending[0]["id"] == nid
+    assert pending[0]["channel"] == "app"
+    assert ack_notification(nid, 9002) is True
+    assert get_pending_notifications(9002) == []
+    # Двойной ack → False (уже доставлено).
+    assert ack_notification(nid, 9002) is False
+    # Чужой user_id не может ack'ать.
+    nid2 = enqueue_notification(9002, None, "alarm", "X", "y")
+    assert ack_notification(nid2, 9999) is False
+    assert len(get_pending_notifications(9002)) == 1
+
+
+def test_db_push_subscription_save_list_remove():
+    """save (idempotent) → list → remove → list пуст."""
+    from database import (
+        list_push_subscriptions,
+        remove_push_subscription,
+        save_push_subscription,
+    )
+    e = "https://example.org/push/aaa"
+    assert save_push_subscription(9003, e, "p256dh1", "auth1")
+    # Повторный save обновляет ключи без дублирования.
+    assert save_push_subscription(9003, e, "p256dh2", "auth2")
+    subs = list_push_subscriptions(9003)
+    assert len(subs) == 1
+    assert subs[0]["p256dh"] == "p256dh2"
+    assert remove_push_subscription(e)
+    assert list_push_subscriptions(9003) == []
+    # Невалидные данные не пишутся.
+    assert save_push_subscription(9003, "", "x", "y") is False
+
+
+def test_api_task_create_with_channels(client):
+    """Phase 13.1: POST /api/tasks принимает reminder_channels."""
+    r = client.post(
+        "/api/tasks",
+        json={"description": "x", "reminder_channels": ["app", "alarm"]},
+        headers=hdr(),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["reminder_channels"] == "app,alarm"     # отдаём CSV
+
+
+def test_api_task_patch_channels(client):
+    """PATCH меняет каналы."""
+    tid = client.post(
+        "/api/tasks", json={"description": "x"}, headers=hdr()
+    ).json()["id"]
+    r = client.patch(
+        f"/api/tasks/{tid}",
+        json={"reminder_channels": ["tg", "app"]},
+        headers=hdr(),
+    )
+    assert r.status_code == 200
+    assert r.json()["reminder_channels"] == "tg,app"
+
+
+def test_api_notifications_pending_and_ack(client):
+    """GET /api/notifications/pending + POST .../ack."""
+    from database import enqueue_notification
+    nid = enqueue_notification(
+        user_id=42, task_id=None, channel="app",
+        kind="Напоминаю", description="hi",
+    )
+    pending = client.get("/api/notifications/pending", headers=hdr()).json()
+    assert any(p["id"] == nid for p in pending)
+    r = client.post(f"/api/notifications/{nid}/ack", headers=hdr())
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert client.get(
+        "/api/notifications/pending", headers=hdr()
+    ).json() == []
+
+
+def test_api_push_subscribe_unsubscribe(client):
+    """POST /api/push/subscribe и /unsubscribe."""
+    sub = {
+        "endpoint": "https://example.org/push/xyz",
+        "p256dh": "k1", "auth": "k2",
+    }
+    r = client.post("/api/push/subscribe", json=sub, headers=hdr())
+    assert r.status_code == 200 and r.json()["ok"] is True
+    # Битый endpoint → 422.
+    bad = client.post(
+        "/api/push/subscribe",
+        json={"endpoint": "", "p256dh": "x", "auth": "y"},
+        headers=hdr(),
+    )
+    assert bad.status_code == 422
+    # Unsubscribe.
+    r2 = client.post("/api/push/unsubscribe", json=sub, headers=hdr())
+    assert r2.status_code == 200
+
+
+async def test_scheduler_routes_by_channels():
+    """Phase 13.1: задача с каналом "app" не шлёт TG, а кладёт pending."""
+    from unittest.mock import AsyncMock
+
+    import config as config_mod
+    from database import (
+        add_task,
+        get_pending_notifications,
+        set_reminder_at,
+        set_reminder_channels,
+    )
+    from scheduler import check_and_send_reminders
+
+    save_ids = config_mod.ALLOWED_USER_IDS
+    config_mod.ALLOWED_USER_IDS = set()
+    try:
+        t = add_task(9100, "drink water")
+        set_reminder_at(t, "2020-01-01 00:00:00")
+        set_reminder_channels(t, ["app"])      # только app — без TG
+        fake_bot = AsyncMock()
+        sent = await check_and_send_reminders(fake_bot)
+        assert sent == 1
+        # В TG ничего не отправлено.
+        assert not [
+            c for c in fake_bot.send_message.await_args_list
+            if c.kwargs.get("chat_id") == 9100
+        ]
+        # Pending-уведомление лежит для клиента.
+        pending = get_pending_notifications(9100)
+        assert len(pending) == 1
+        assert pending[0]["channel"] == "app"
+        assert pending[0]["kind"] == "Напоминаю"
+    finally:
+        config_mod.ALLOWED_USER_IDS = save_ids

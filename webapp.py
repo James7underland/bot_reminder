@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 import config
 from database import (
+    ack_notification,
     add_note,
     add_step,
     add_task,
@@ -44,6 +45,7 @@ from database import (
     get_myday,
     get_note,
     get_notes,
+    get_pending_notifications,
     get_planned,
     get_steps,
     get_steps_counts,
@@ -61,11 +63,13 @@ from database import (
     move_task_down,
     move_task_up,
     remove_from_myday,
+    remove_push_subscription,
     rename_list,
     reorder_task,
     restore_list,
     restore_note,
     restore_task,
+    save_push_subscription,
     search_notes,
     search_tasks,
     set_deadline,
@@ -74,6 +78,7 @@ from database import (
     set_note,
     set_recurrence,
     set_reminder_at,
+    set_reminder_channels,
     set_task_note,
     set_timezone,
     snooze_reminder,
@@ -279,6 +284,8 @@ class TaskCreate(BaseModel):
     description: str
     deadline: str | None = None
     reminder_at: str | None = None
+    # Phase 13.1: каналы доставки (tg/app/alarm). None → дефолт ["tg"].
+    reminder_channels: list[str] | None = None
 
 
 class TaskPatch(BaseModel):
@@ -295,6 +302,14 @@ class TaskPatch(BaseModel):
     # Phase 11.6: ссылка на отдельную заметку.
     note_id: int | None = None
     clear_note: bool = False
+    # Phase 13.1: каналы доставки уведомления.
+    reminder_channels: list[str] | None = None
+
+
+class PushSubscribe(BaseModel):
+    endpoint: str
+    p256dh: str
+    auth: str
 
 
 class ListCreate(BaseModel):
@@ -449,6 +464,9 @@ async def api_create_task(
         set_deadline(task_id, _to_utc_or_none(body.deadline, user_id))
     if body.reminder_at:
         set_reminder_at(task_id, _to_utc_or_none(body.reminder_at, user_id))
+    if body.reminder_channels is not None:
+        # Phase 13.1: каналы доставки (валидация + нормализация — в БД).
+        set_reminder_channels(task_id, body.reminder_channels)
     return _decorate_one(get_task(task_id), user_id)
 
 
@@ -536,6 +554,9 @@ async def api_patch_task(
         # Заметка должна быть своя и не удалённая.
         _require_own_note(user_id, body.note_id)
         set_task_note(task_id, body.note_id)
+    # Phase 13.1: каналы уведомлений.
+    if body.reminder_channels is not None:
+        set_reminder_channels(task_id, body.reminder_channels)
     return _decorate_one(get_task(task_id), user_id)
 
 
@@ -949,6 +970,52 @@ async def api_import(
         return import_user_data(user_id, body.payload, mode=body.mode)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from None
+
+
+# --- Phase 13.1: уведомления (foreground polling + Web Push) ---
+
+
+@app.get("/api/notifications/pending")
+async def api_notifications_pending(
+    user_id: int = Depends(current_user_id),
+) -> list[dict]:
+    """Клиент опрашивает раз в N секунд (foreground polling)."""
+    return get_pending_notifications(user_id)
+
+
+@app.post("/api/notifications/{notification_id}/ack")
+async def api_notifications_ack(
+    notification_id: int, user_id: int = Depends(current_user_id),
+) -> dict:
+    """Клиент подтверждает, что показал уведомление."""
+    return {"ok": ack_notification(notification_id, user_id)}
+
+
+@app.get("/api/push/vapid-public")
+async def api_push_vapid_public() -> dict:
+    """Публичный VAPID-ключ для подписки на Web Push в браузере."""
+    return {"key": config.VAPID_PUBLIC_KEY or ""}
+
+
+@app.post("/api/push/subscribe")
+async def api_push_subscribe(
+    body: PushSubscribe, user_id: int = Depends(current_user_id),
+) -> dict:
+    ok = save_push_subscription(user_id, body.endpoint, body.p256dh, body.auth)
+    if not ok:
+        raise HTTPException(status_code=422, detail="invalid subscription")
+    return {"ok": True}
+
+
+@app.post("/api/push/unsubscribe")
+async def api_push_unsubscribe(
+    body: PushSubscribe, user_id: int = Depends(current_user_id),
+) -> dict:
+    # Для unsubscribe нужен только endpoint, но мы используем тот же
+    # Pydantic-класс ради простоты — p256dh/auth просто игнорируются.
+    _ = user_id     # авторизация по токену уже была
+    remove_push_subscription(body.endpoint)
+    return {"ok": True}
 
 
 # Раздача фронтенда Mini App. Монтируется ПОСЛЕ API-маршрутов, чтобы

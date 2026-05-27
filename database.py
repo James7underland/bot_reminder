@@ -193,6 +193,52 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+    # Phase 13.1: каналы доставки напоминания на задачу (tg/app/alarm,
+    # через запятую; default 'tg' — бэк-совместимость со старыми задачами,
+    # которые шлются только в Telegram).
+    if "reminder_channels" not in columns:
+        cursor.execute(
+            "ALTER TABLE tasks ADD COLUMN reminder_channels "
+            "TEXT NOT NULL DEFAULT 'tg'"
+        )
+    # Phase 13.1: очередь app/alarm-уведомлений для клиента. Сервер
+    # пишет сюда при срабатывании reminder/overdue (если в каналах
+    # выбран app или alarm); клиент опрашивает через
+    # /api/notifications/pending и подтверждает ack'ом. Используется как
+    # foreground-fallback, если push не дошёл (открыт ли клиент сейчас).
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS pending_notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            task_id INTEGER,
+            channel TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            description TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            delivered_at TIMESTAMP
+        )
+    ''')
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_pn_undelivered "
+        "ON pending_notifications(user_id, delivered_at)"
+    )
+    # Phase 13.1: Web Push подписки. Один user может иметь несколько
+    # (PWA на ПК + APK на телефоне). UNIQUE по endpoint — Web Push
+    # endpoint глобально уникален в рамках push-сервиса.
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS push_subscriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            endpoint TEXT NOT NULL UNIQUE,
+            p256dh TEXT NOT NULL,
+            auth TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_push_by_user "
+        "ON push_subscriptions(user_id)"
+    )
     conn.commit()
     conn.close()
     logger.info("База данных инициализирована.")
@@ -841,15 +887,22 @@ def complete_task(task_id: int) -> dict | None:
     new_task_id = None
     if row["recurrence"] and is_valid_recurrence(row["recurrence"]) and row["due_date"]:
         next_due = next_occurrence(row["due_date"], row["recurrence"])
+        # Phase 13.1: переносим reminder_channels на новый экземпляр.
+        channels = "tg"
+        try:
+            channels = row["reminder_channels"] or "tg"
+        except (IndexError, KeyError):
+            pass
         cursor.execute(
             "INSERT INTO tasks (user_id, description, due_date, list_id, "
-            "recurrence) VALUES (?, ?, ?, ?, ?)",
+            "recurrence, reminder_channels) VALUES (?, ?, ?, ?, ?, ?)",
             (
                 row["user_id"],
                 row["description"],
                 next_due,
                 row["list_id"],
                 row["recurrence"],
+                channels,
             ),
         )
         new_task_id = cursor.lastrowid
@@ -2388,3 +2441,174 @@ def find_user_by_api_token(token: str) -> int | None:
     row = cursor.fetchone()
     conn.close()
     return int(row[0]) if row else None
+
+
+# --- Phase 13.1: каналы уведомлений на задачу ---
+
+_VALID_CHANNELS = ("tg", "app", "alarm")
+
+
+def _normalize_channels(channels) -> str:
+    """Возвращает CSV из канонических каналов; None/пусто → \"tg\"."""
+    if channels is None:
+        return "tg"
+    if isinstance(channels, str):
+        items = [c.strip() for c in channels.split(",")]
+    else:
+        items = [str(c).strip() for c in channels]
+    keep = [c for c in items if c in _VALID_CHANNELS]
+    # Дедуплицируем и сохраняем порядок tg/app/alarm для стабильности.
+    seen = set()
+    result = []
+    for c in _VALID_CHANNELS:
+        if c in keep and c not in seen:
+            seen.add(c)
+            result.append(c)
+    return ",".join(result) if result else "tg"
+
+
+def set_reminder_channels(task_id: int, channels) -> bool:
+    """Перезаписывает каналы напоминания задачи. False если задачи нет."""
+    csv = _normalize_channels(channels)
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE tasks SET reminder_channels = ? WHERE id = ?",
+        (csv, task_id),
+    )
+    rows = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows > 0:
+        logger.info("task=%s reminder_channels=%s", task_id, csv)
+        return True
+    return False
+
+
+def get_reminder_channels(task_id: int) -> list[str]:
+    """Каналы как список ([\"tg\"] по умолчанию)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT reminder_channels FROM tasks WHERE id = ?", (task_id,)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if row is None or not row[0]:
+        return ["tg"]
+    return [c for c in row[0].split(",") if c]
+
+
+# --- Phase 13.1: очередь pending-уведомлений (foreground fallback) ---
+
+
+def enqueue_notification(
+    user_id: int, task_id: int | None, channel: str,
+    kind: str, description: str,
+) -> int:
+    """Кладёт запись для клиента. Возвращает id записи."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO pending_notifications "
+        "(user_id, task_id, channel, kind, description) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (user_id, task_id, channel, kind, description),
+    )
+    nid = int(cursor.lastrowid or 0)
+    conn.commit()
+    conn.close()
+    logger.info(
+        "queued notification user=%s task=%s ch=%s kind=%s",
+        user_id, task_id, channel, kind,
+    )
+    return nid
+
+
+def get_pending_notifications(user_id: int) -> list[dict]:
+    """Возвращает все недоставленные уведомления пользователя."""
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, task_id, channel, kind, description, created_at "
+        "FROM pending_notifications "
+        "WHERE user_id = ? AND delivered_at IS NULL "
+        "ORDER BY id",
+        (user_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def ack_notification(notification_id: int, user_id: int) -> bool:
+    """Помечает доставленной. False если чужая/нет."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE pending_notifications SET delivered_at = CURRENT_TIMESTAMP "
+        "WHERE id = ? AND user_id = ? AND delivered_at IS NULL",
+        (notification_id, user_id),
+    )
+    rows = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return rows > 0
+
+
+# --- Phase 13.1: Web Push подписки ---
+
+
+def save_push_subscription(
+    user_id: int, endpoint: str, p256dh: str, auth: str,
+) -> bool:
+    """Сохраняет подписку. Конфликт по endpoint → обновляем user/keys."""
+    if not endpoint or not p256dh or not auth:
+        return False
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) "
+        "VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(endpoint) DO UPDATE SET "
+        "user_id = excluded.user_id, p256dh = excluded.p256dh, "
+        "auth = excluded.auth",
+        (user_id, endpoint, p256dh, auth),
+    )
+    conn.commit()
+    conn.close()
+    logger.info("push subscription saved user=%s", user_id)
+    return True
+
+
+def list_push_subscriptions(user_id: int) -> list[dict]:
+    """Все активные подписки пользователя для рассылки push'ей."""
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT endpoint, p256dh, auth FROM push_subscriptions "
+        "WHERE user_id = ?",
+        (user_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def remove_push_subscription(endpoint: str) -> bool:
+    """Удаляет подписку (вызывается при 410 Gone от push-сервиса)."""
+    if not endpoint:
+        return False
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM push_subscriptions WHERE endpoint = ?", (endpoint,)
+    )
+    rows = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if rows > 0:
+        logger.info("push subscription removed (endpoint deleted)")
+    return rows > 0

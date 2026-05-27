@@ -7,5 +7,10 @@ python-dotenv>=1.0
 fastapi>=0.115,<1
 uvicorn[standard]>=0.30
 
+# Phase 13.1 – Web Push (app/alarm уведомления в фоне). Тянет
+# cryptography для VAPID-подписи. Опциональна: если pywebpush не
+# установлен, pushsend.send_push_to_user становится no-op.
+pywebpush>=2.0
+
 # Фаза 6 (PostgreSQL) – раскомментировать при миграции:
 # psycopg[binary]>=3.2

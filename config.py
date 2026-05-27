@@ -39,6 +39,14 @@ SCHEDULER_CHECK_INTERVAL = int(os.environ.get("SCHEDULER_CHECK_INTERVAL", "60"))
 # старый домен → пользователь иногда попадал на чужой сайт.
 MINI_APP_URL = os.environ.get("MINI_APP_URL", "https://app.reminderr.ru/")
 
+# Phase 13.1: VAPID-ключи для Web Push (доставка app/alarm уведомлений в
+# фоне). Генерируются один раз (см. DEPLOYMENT.md §Web Push). Если не
+# заданы — push отключён, останется только TG-канал + foreground poll.
+VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "")
+# `mailto:` или https-URL для VAPID subject (требование RFC 8292).
+VAPID_SUBJECT = os.environ.get("VAPID_SUBJECT", "mailto:admin@reminderr.ru")
+
 
 def _parse_allowlist(raw: str) -> set:
     """Парсит CSV-список ID/имён в set из непустых элементов."""

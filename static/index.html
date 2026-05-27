@@ -231,6 +231,14 @@
        border-radius:8px;border:1px solid var(--hint);
        background:var(--bg);color:var(--text);font:inherit}
   .panel textarea{min-height:54px;resize:vertical}
+  /* Phase 13.1: fieldset с чекбоксами каналов уведомления. */
+  .panel .f-channels{border:1px solid var(--sec);border-radius:8px;
+    padding:6px 10px 8px;margin:0;display:flex;flex-wrap:wrap;gap:6px 14px}
+  .panel .f-channels legend{font-size:11px;color:var(--hint);
+    text-transform:uppercase;letter-spacing:.5px;padding:0 4px}
+  .panel .f-channels label{display:inline-flex;align-items:center;gap:4px;
+    font-size:13px;color:var(--text);cursor:pointer}
+  .panel .f-channels input[type=checkbox]{width:auto;margin:0}
   .steps .step{display:flex;align-items:center;gap:8px;margin:5px 0}
   .schk{width:18px;height:18px;flex:none;border:2px solid var(--hint);
        border-radius:4px}
@@ -672,6 +680,121 @@ if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("/sw.js").catch(() => {});
   });
 }
+
+// --- Phase 13.1: Web Push подписка + foreground polling ---
+
+// base64url → Uint8Array для applicationServerKey.
+function _urlBase64ToUint8Array(s) {
+  const padding = "=".repeat((4 - s.length % 4) % 4);
+  const base64 = (s + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+// ArrayBuffer → base64url (для отправки p256dh/auth серверу).
+function _arrayBufferToBase64Url(buf) {
+  let s = "";
+  const bytes = new Uint8Array(buf);
+  for (let i = 0; i < bytes.byteLength; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+let _pushSubPromise = null;
+async function _ensurePushReady() {
+  // Одна попытка на сессию — повторные вызовы дают ту же promise.
+  if (_pushSubPromise) return _pushSubPromise;
+  _pushSubPromise = (async () => {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+      uiToast("Этот клиент не поддерживает push — уведомления только пока окно открыто");
+      return null;
+    }
+    if (!("Notification" in window)) return null;
+    if (Notification.permission === "default") {
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") {
+        uiToast("Без разрешения уведомления показаны не будут");
+        return null;
+      }
+    } else if (Notification.permission !== "granted") {
+      return null;   // denied — спрашивать заново нельзя
+    }
+    // Получаем VAPID public ключ от сервера.
+    let vapidKey;
+    try {
+      const r = await api("/push/vapid-public", {_silent: true});
+      vapidKey = r && r.key;
+    } catch { return null; }
+    if (!vapidKey) {
+      // Push отключён на сервере — это OK, останется foreground polling.
+      return null;
+    }
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      try {
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: _urlBase64ToUint8Array(vapidKey),
+        });
+      } catch (e) {
+        uiToast("Не удалось подписаться на push: " + (e.message || e));
+        return null;
+      }
+    }
+    // Шлём подписку на сервер (idempotent — ON CONFLICT update).
+    const json = sub.toJSON();
+    const p256dh = json.keys && json.keys.p256dh
+      || _arrayBufferToBase64Url(sub.getKey("p256dh"));
+    const auth = json.keys && json.keys.auth
+      || _arrayBufferToBase64Url(sub.getKey("auth"));
+    try {
+      await api("/push/subscribe", {
+        method: "POST",
+        body: JSON.stringify({endpoint: sub.endpoint, p256dh, auth}),
+        _silent: true,
+      });
+    } catch { /* offline — подпишемся при следующем save */ }
+    return sub;
+  })();
+  return _pushSubPromise;
+}
+
+// Foreground polling: пока вкладка видна, раз в 30 сек тянем pending
+// и показываем как in-page toast (если уведомление не приходит через
+// push — клиент закрыт-открыт между push'ем — мы его всё равно покажем).
+async function _pollPending() {
+  if (document.visibilityState !== "visible") return;
+  let list;
+  try {
+    list = await api("/notifications/pending", {_silent: true});
+  } catch { return; }
+  if (!Array.isArray(list) || !list.length) return;
+  for (const n of list) {
+    const title = `${n.kind}: ${n.description}`;
+    if ("Notification" in window && Notification.permission === "granted") {
+      try {
+        new Notification(title, {
+          body: n.description,
+          icon: "/icon-192.png",
+          requireInteraction: n.channel === "alarm",
+        });
+      } catch { uiToast(title); }
+    } else {
+      uiToast(title);
+    }
+    try {
+      await api(`/notifications/${n.id}/ack`, {method: "POST", _silent: true});
+    } catch { /* ack в следующий раз */ }
+  }
+}
+setInterval(_pollPending, 30000);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") _pollPending();
+});
+// Первый опрос — сразу после загрузки задач.
+setTimeout(_pollPending, 1500);
 
 // --- Модалы. Нативные window.alert/prompt/confirm в Telegram WebApp
 // работают нестабильно (фокус не возвращается → менюшки «залипают»).
@@ -1329,6 +1452,12 @@ function row(t){
       <label>Описание<input class="f-desc" value="${esc(t.description)}"></label>
       <label>Срок<input type="datetime-local" class="f-dl"></label>
       <label>Напоминание<input type="datetime-local" class="f-rm"></label>
+      <fieldset class="f-channels">
+        <legend>Где напомнить</legend>
+        <label><input type="checkbox" class="f-ch" value="tg" checked>📨 Telegram</label>
+        <label><input type="checkbox" class="f-ch" value="app">🔔 Уведомление</label>
+        <label><input type="checkbox" class="f-ch" value="alarm">⏰ Будильник</label>
+      </fieldset>
       <label>Повтор
         <select class="f-rec">
           <option value="">нет</option>
@@ -1408,6 +1537,11 @@ function row(t){
   $(".meta", li).textContent = meta.join(" · ");
   $(".f-dl", li).value = toInput(t.deadline);
   $(".f-rm", li).value = toInput(t.reminder_at);
+  // Phase 13.1: каналы доставки. CSV → расставляем чекбоксы.
+  const chSet = new Set((t.reminder_channels || "tg").split(","));
+  li.querySelectorAll(".f-ch").forEach(cb => {
+    cb.checked = chSet.has(cb.value);
+  });
   // Повтор: пресет или custom (every:N:U / weekdays:...)
   const recSel = $(".f-rec", li);
   const cust = $(".f-cust", li);
@@ -1514,10 +1648,23 @@ function row(t){
         }
       }
       const notes = $(".f-notes",li).value;
+      // Phase 13.1: собираем выбранные каналы. Если пользователь снял
+      // все галки — насильно ставим хотя бы tg (UX), и предупреждаем.
+      let channels = [...li.querySelectorAll(".f-ch:checked")].map(c => c.value);
+      if (!channels.length) {
+        channels = ["tg"];
+        uiToast("Минимум один канал — поставлен Telegram");
+      }
+      // Если выбрали app/alarm — нужно разрешение на уведомления +
+      // подписка на Web Push (один раз глобально).
+      if (channels.includes("app") || channels.includes("alarm")) {
+        await _ensurePushReady();
+      }
       await api(`/tasks/${t.id}`, {method:"PATCH", body: JSON.stringify({
         description: $(".f-desc",li).value,
         deadline: fmt($(".f-dl",li).value) || null,
         reminder_at: fmt($(".f-rm",li).value) || null,
+        reminder_channels: channels,
         ...(rec ? {recurrence: rec} : {clear_recurrence: true}),
         ...(notes.trim() ? {notes: notes} : {clear_notes: true}),
       })});
