@@ -1,0 +1,55 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Напоминалка",
+  "version": "0.1.0",
+  "identifier": "ru.reminderr.desktop",
+  "build": {
+    "frontendDist": "https://app.reminderr.ru/",
+    "devUrl": "https://app.reminderr.ru/"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Напоминалка",
+        "url": "https://app.reminderr.ru/",
+        "width": 980,
+        "height": 720,
+        "minWidth": 360,
+        "minHeight": 480,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "center": true,
+        "transparent": false
+      }
+    ],
+    "security": {
+      "csp": null
+    },
+    "withGlobalTauri": false
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["msi", "nsis"],
+    "category": "Productivity",
+    "shortDescription": "Менеджер задач и заметок",
+    "longDescription": "Десктоп-клиент Mini App для Telegram-бота bot_reminder. Те же задачи и заметки, что в Telegram, в отдельном окне.",
+    "copyright": "© 2026 @e_rnst",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "wix": {
+        "language": ["ru-RU", "en-US"]
+      },
+      "nsis": {
+        "languages": ["Russian", "English"]
+      }
+    }
+  }
+}

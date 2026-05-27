@@ -1,0 +1,16 @@
+{
+  "name": "reminderr-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Tauri-обёртка для Mini App Напоминалка (Windows-десктоп).",
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "icon": "tauri icon"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.2.0"
+  }
+}
