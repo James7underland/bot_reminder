@@ -1,85 +1,90 @@
-# Напоминалка — Windows desktop (Tauri)
+# Напоминалка — Windows (MSIX через PWA Builder)
 
-Нативная обёртка Mini App для Windows. Использует **системный WebView**
-(Edge WebView2, на Windows 10/11 уже предустановлен), потому бандл
-получается лёгким (~5 МБ).
+Сборка идёт онлайн через [PWA Builder](https://www.pwabuilder.com/),
+**без локальной установки чего-либо** (никакого Rust, никакого
+Visual Studio). На выходе — `.msix`-пакет с тестовым сертификатом,
+устанавливается как обычное Windows-приложение.
 
-Внутри окна — тот же UI, что в Telegram Mini App. Бэкенд — общий
-(`app.reminderr.ru`). Авторизация — по API-токену (см. ниже).
+Внутри окна — тот же UI, что в Telegram Mini App. Бэкенд общий
+(`app.reminderr.ru`). Авторизация — по API-токену (`/token` в боте).
 
-## Что внутри
+## Однократная сборка
 
-- `src-tauri/` — Rust-проект Tauri 2.
-- `src-tauri/tauri.conf.json` — настройки окна (размеры, заголовок,
-  URL, иконки, инсталлятор).
-- `src-tauri/src/lib.rs` + `main.rs` — минимальный бутстрап Tauri.
-  Native-кода пока нет.
-- `src-tauri/icons/icon.png` — источник 512×512, из которого
-  генерируются все остальные форматы иконок.
-- `package.json` — обёртка для запуска Tauri CLI через `npm`.
+1. Открой https://www.pwabuilder.com/
+2. В большое поле URL вставь: `https://app.reminderr.ru/` → Start.
+3. Подожди, пока PWA Builder проверит manifest и service worker —
+   должны быть три зелёных галки (Manifest / Service Worker / HTTPS).
+4. Нажми **«Package for stores»** → **Windows**.
+5. **Windows Package Options** — заполни так:
+   - **Package ID**: `Reminderr.Napominalka`
+   - **Publisher ID**: `CN=Reminderr`
+   - **Publisher display name**: `Reminderr`
+   - Остальное (AI / All Settings) можно не трогать.
+6. Жми **«Download Package»**. Получишь ZIP-архив со следующим:
+   - `Reminderr.Napominalka_x.x.x.x_x64.msix` — сам пакет приложения.
+   - `Reminderr.Napominalka_x.x.x.x.cer` — тестовый сертификат подписи.
+   - `Install.ps1` — скрипт-установщик (ставит сертификат в Trusted
+     Root + затем сам MSIX).
+   - `README.html` — инструкция от PWA Builder.
 
-## Однократная настройка
+## Установка на Windows
 
-1. **Установить Node.js** (≥ 18): https://nodejs.org/ — LTS.
-2. **Установить Rust**:
+1. Распакуй ZIP.
+2. **Включи «Режим разработчика»** один раз (Windows требует его для
+   установки MSIX, подписанного локальным сертификатом):
+   - `Параметры → Конфиденциальность и безопасность → Для разработчиков →
+     "Режим разработчика" = Вкл`.
+3. **Запусти `Install.ps1`** — правой кнопкой → **«Выполнить с помощью
+   PowerShell»**. Скрипт:
+   - попросит подтверждение установки сертификата в Trusted Root —
+     соглашайся (`Y`);
+   - установит сам MSIX.
+4. **Если PowerShell ругается на политику выполнения**: открой
+   PowerShell от Администратора и выполни:
    ```powershell
-   winget install Rustlang.Rustup
+   Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process
+   .\Install.ps1
    ```
-   После установки перезапустить терминал, проверить: `cargo --version`.
-3. **WebView2** на Windows 10/11 — уже стоит. Если нет, инсталлятор
-   Tauri сам его поставит на первом запуске.
-4. **Установить npm-зависимости**:
-   ```powershell
-   cd desktop
-   npm install
-   ```
-5. **Сгенерировать иконки** (один раз — Tauri сам сделает 32/128/256/ico):
-   ```powershell
-   npm run tauri icon src-tauri/icons/icon.png
-   ```
+5. После установки — иконка приложения в Пуске → клик → открывается
+   как обычное Windows-окно (не браузерное). При первом запуске
+   попросит API-токен — получи `/token` в боте.
 
-## Сборка
+## Обновление
 
-**Разработка** — окно с hot-reload (изменения в `tauri.conf.json` сразу
-применяются):
-```powershell
-npm run dev
-```
+Обновления **самого UI** прилетают автоматически с `app.reminderr.ru`
+(service worker делает network-first cache). Переустанавливать MSIX не
+надо.
 
-**Релиз** — `.msi` и `.exe` (NSIS) инсталляторы:
-```powershell
-npm run build
-```
-
-Готовые файлы появятся в `src-tauri/target/release/bundle/`:
-- `msi/Напоминалка_0.1.0_x64_ru-RU.msi` — для install через `msiexec`.
-- `nsis/Напоминалка_0.1.0_x64-setup.exe` — обычный setup-wizard.
-
-Любой можно запустить → приложение установится в `%LocalAppData%\Programs\Напоминалка`,
-появится в Пуске и на рабочем столе.
-
-## Первый запуск
-
-При первом запуске откроется тот же модал ввода API-токена, что и в PWA.
-Получи токен в боте командой `/token`, вставь — больше спрашивать не
-будет.
+Если изменится **обёртка** (имя пакета, иконка, manifest), снова
+PWA Builder → Download → запустить новый `Install.ps1`. Тем же
+Publisher ID (важно — иначе Windows воспримет как другое приложение).
 
 ## Что НЕТ в этом MVP (Phase 13.0)
 
-- ❌ Системные ОС-уведомления (только Telegram-уведомления от бота).
+- ❌ Системные ОС-уведомления (только Telegram-уведомления от бота). PWA
+  Notification API технически работает, но требует регистрации Push API
+  и сервера — займёмся в Phase 13.1+.
 - ❌ Системный трей с непрочитанными.
 - ❌ Авто-старт с Windows.
 - ❌ Глобальные горячие клавиши.
-- ❌ Хранение токена в Windows Credential Manager (пока — localStorage,
-  как в PWA).
+- ❌ Хранение токена в Windows Credential Manager (пока — localStorage
+  внутри MSIX, как в PWA).
 
-Эти возможности добавятся прицельно через
-[Tauri-плагины](https://v2.tauri.app/plugin/) в следующих фазах под
-конкретные задачи (см. Phase 13.1+: per-task notification routing).
+Эти возможности требуют переход с PWA Builder MSIX на нативную
+обёртку — Tauri (Rust + WebView2) или WinUI 3. Делаем по мере
+необходимости в Phase 13.1+, под конкретные задачи (особенно когда
+дойдёт до per-task notification routing с настоящими ОС-будильниками).
 
 ## Подпись и SmartScreen
 
-Релизный `.exe` пока не подписан → при первом запуске Windows покажет
-«SmartScreen: неизвестный издатель». Нажми «Подробнее → Выполнить в
-любом случае». Чтобы убрать — нужен **code signing certificate**
-(~$200/год); решение откладывается, пока пользователь один.
+Тестовый сертификат из PWA Builder подходит только для **локальной
+установки**. Если придётся раздавать .msix другим людям, нужен
+**code signing certificate** от трастового CA (~$200/год). Откладываю,
+пока пользователь один.
+
+## Альтернатива — Microsoft Store
+
+Тот же `.msix` можно загрузить в **Microsoft Store** через Partner
+Center (нужен ~$19 разовый платёж за dev-аккаунт). После публикации
+любой пользователь сможет ставить из Store без возни с сертификатами.
+Не делаем сейчас — single-user проект, sideloading достаточно.

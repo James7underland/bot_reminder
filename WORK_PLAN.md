@@ -593,26 +593,25 @@ Mini App» + «Нужно добавить раздел с заметками (�
   вырезаны handler-тесты – DB-слой остаётся, пользовательские сценарии
   живут в `test_webapp.py`. Планировщик (рассылка напоминаний и
   purge soft-deleted) сохранён. 196 тестов, TOTAL 99.30%.
-### Phase 13.0 – Native wrappers (Tauri + TWA)
+### Phase 13.0 – Native wrappers (PWA Builder для обеих платформ)
 
-- **13.0 ✅:** Фундамент перехода от PWA к настоящим native-приложениям.
-  Подготовлены два проекта-обёртки в монорепо, оба загружают
-  `https://app.reminderr.ru/` (тот же UI, тот же бэкенд, та же
-  токен-авторизация). Native-кода в этой фазе нет — это скаффолдинг
-  под Phase 13.1+ (per-task notification routing: Telegram / ОС /
-  будильник / все).
-  - `desktop/` — Tauri 2 на Rust + Edge WebView2 для Windows.
-    `tauri.conf.json`, минимальные `lib.rs`/`main.rs`, иконка-источник
-    `icons/icon.png` (512x512). Билд локально: `cd desktop && npm
-    install && npm run tauri build` → `.msi`/`.exe` в
-    `src-tauri/target/release/bundle/`. Бандл ~5 МБ.
-  - `android/README.md` — пошаговая инструкция для PWA Builder
-    (онлайн, без локального Android SDK). Получаем подписанный APK +
-    keystore + assetlinks.json за 5 минут.
-  - `static/.well-known/assetlinks.json` — placeholder; после первой
-    PWA Builder сборки пользователь заменит fingerprint, и Chrome
-    перестанет показывать browser-bar внутри TWA. Проверено: StaticFiles
-    отдаёт его на `/.well-known/assetlinks.json` (200 + application/json).
+- **13.0.1 ✅:** По решению пользователя обе платформы собираются через
+  PWA Builder (онлайн), **без локальных SDK** (никакого Rust, никакого
+  Android Studio). Tauri-скаффолдинг из PR #84 удалён. Если в
+  Phase 13.1+ выяснится, что MSIX/TWA не дают нужных нативных API,
+  вернёмся к Tauri/Capacitor под конкретные нужды.
+- **13.0 ✅:** Фундамент перехода от PWA к нативным приложениям. Оба
+  README ведут на pwabuilder.com → URL → Package for stores.
+  - `desktop/README.md` — Windows MSIX. Поля формы: Package ID
+    `Reminderr.Napominalka`, Publisher ID `CN=Reminderr`, Publisher
+    display name `Reminderr`. Установка через `Install.ps1` после
+    включения «Режима разработчика».
+  - `android/README.md` — Android TWA. На выходе подписанный APK +
+    keystore + assetlinks.json.
+  - `static/.well-known/assetlinks.json` — placeholder; пользователь
+    заменяет fingerprint после первой Android-сборки → Chrome убирает
+    browser-bar в TWA. Проверено: StaticFiles отдаёт его на
+    `/.well-known/assetlinks.json` (200 + application/json).
   - Что НЕ входит сюда: нативные ОС-уведомления, системный трей,
     автостарт, alarms, foreground service. Всё это — следующими фазами
     через Tauri-плагины (Windows) и переезд на Capacitor (Android)
