@@ -21,6 +21,19 @@
     --btn-text:var(--tg-theme-button-text-color,#fff);
     --sec:var(--tg-theme-secondary-bg-color,#f1f1f1);
   }
+  /* Phase 12.1: ручное переключение темы. По умолчанию (Auto) подхватываются
+     Telegram-переменные (или fallback при PWA + светлая OS). Light/Dark
+     перебивают через body-класс. */
+  body.theme-light{
+    --bg:#ffffff; --text:#0f1419; --hint:#8a99a8;
+    --link:#2481cc; --btn:#2481cc; --btn-text:#ffffff;
+    --sec:#f1f1f1;
+  }
+  body.theme-dark{
+    --bg:#0d141a; --text:#f3f4f6; --hint:#8b95a4;
+    --link:#5fb1f5; --btn:#3390ec; --btn-text:#ffffff;
+    --sec:#1a2230;
+  }
   *{box-sizing:border-box}
   /* Phase 11.22 (#5): системный шрифт как у Telegram/BotFather —
      Segoe UI на Windows/tdesktop, Roboto на Android, San Francisco на
@@ -391,6 +404,7 @@
 
 <!-- Overflow-меню ⋯ – редкие действия (часовой пояс, экспорт, импорт). -->
 <div id="moreMenu" class="popmenu" hidden>
+  <button class="popmenu-item" data-action="theme">🎨 Тема</button>
   <button class="popmenu-item" data-action="tz">⚙ Часовой пояс</button>
   <button class="popmenu-item" data-action="export">📦 Экспорт JSON</button>
   <button class="popmenu-item" data-action="import">↩ Импорт JSON</button>
@@ -557,6 +571,55 @@ function _setupWindowMode() {
   }
 }
 _setupWindowMode();
+
+// --- Phase 12.1: переключатель темы (Авто / Светлая / Тёмная) ---
+//
+// Хранение в localStorage:
+//   "auto" (или нет ключа) → внутри Telegram отдаём решение клиенту
+//     (CSS-переменные из --tg-theme-*), вне Telegram (PWA) — следуем
+//     `prefers-color-scheme` из ОС.
+//   "light" / "dark" → принудительно ставим соответствующий body-класс
+//     (CSS-переменные перекрываются явно, см. блок body.theme-light/dark).
+const _THEME_KEY = "bot_reminder_theme";
+
+function _applyTheme() {
+  let stored = "auto";
+  try { stored = localStorage.getItem(_THEME_KEY) || "auto"; } catch {}
+  // Сброс предыдущего выбора.
+  document.body.classList.remove("theme-light", "theme-dark");
+  // Явные значения — просто ставим класс и выходим.
+  if (stored === "light" || stored === "dark") {
+    document.body.classList.add("theme-" + stored);
+  } else if (!tg || !tg.colorScheme) {
+    // Auto + не в Telegram → следуем системе через media query.
+    if (window.matchMedia &&
+        window.matchMedia("(prefers-color-scheme: dark)").matches) {
+      document.body.classList.add("theme-dark");
+    }
+    // Если светлая система — оставляем :root-defaults (светлая).
+  }
+  // В Telegram + auto: ничего не делаем — переменные --tg-theme-* в :root
+  // уже отрабатывают.
+
+  // Обновим <meta name=theme-color> (адресная строка / таскбар PWA).
+  const eff = document.body.classList.contains("theme-dark") ? "dark"
+    : document.body.classList.contains("theme-light") ? "light"
+    : (tg && tg.colorScheme) || "light";
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = eff === "dark" ? "#0d141a" : "#2481cc";
+}
+
+// Реакция на изменения внешних источников темы.
+if (window.matchMedia) {
+  try {
+    window.matchMedia("(prefers-color-scheme: dark)")
+      .addEventListener("change", _applyTheme);
+  } catch {}
+}
+if (tg) {
+  try { tg.onEvent("themeChanged", _applyTheme); } catch {}
+}
+_applyTheme();
 
 // initData читаем КАЖДЫЙ раз, а не один раз при загрузке: некоторые
 // клиенты Telegram дозаполняют поле после `ready()` или после первого
@@ -1937,12 +2000,25 @@ document.addEventListener("click", (e) => {
   }
 });
 document.querySelectorAll(".popmenu-item").forEach(el => {
-  el.onclick = () => {
+  el.onclick = async () => {
     toggleMoreMenu(false);
     const action = el.dataset.action;
     if (action === "tz") $("#tzBtn").click();
     else if (action === "export") $("#expBtn").click();
     else if (action === "import") $("#impBtn").click();
+    else if (action === "theme") {
+      // Phase 12.1: выбор темы.
+      let cur = "auto";
+      try { cur = localStorage.getItem(_THEME_KEY) || "auto"; } catch {}
+      const picked = await uiSelect("Тема", [
+        {value: "auto",  label: "🔄 Авто (как в системе/Telegram)"},
+        {value: "light", label: "☀ Светлая"},
+        {value: "dark",  label: "🌙 Тёмная"},
+      ], cur);
+      if (!picked || picked === cur) return;
+      try { localStorage.setItem(_THEME_KEY, picked); } catch {}
+      _applyTheme();
+    }
   };
 });
 
